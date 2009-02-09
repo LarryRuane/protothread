@@ -6,7 +6,9 @@
 #ifndef PROTOTHREAD_H
 #define PROTOTHREAD_H
 
+#ifndef PT_DEBUG
 #define PT_DEBUG 1  /* enabled (else 0) */
+#endif
 #define pt_assert(condition) if (PT_DEBUG) assert(condition)
 
 /* standard definitions */
