@@ -3,7 +3,7 @@
 /* Copyright (c) 2008, Larry Ruane, LeftHand Networks Inc. */
 /* See license.txt */
 /**************************************************************/
-#include <malloc.h>
+#include <stdlib.h>
 #include <assert.h>
 #include <string.h>
 #include <stdint.h>
