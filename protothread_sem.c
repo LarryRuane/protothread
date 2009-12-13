@@ -22,7 +22,7 @@ pt_sem_acquire_f(pt_sem_env_t *c, unsigned int *value)
 {
     pt_resume(c) ;
     while (!(*value)) {
-	pt_wait(c, value) ;
+        pt_wait(c, value) ;
     }
     (*value) -- ;
     return PT_DONE ;
