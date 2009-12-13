@@ -12,15 +12,15 @@
 
 /* Number of wait queues (size of wait hash table), power of 2 */
 #define NWAIT (1 << 4)
-int pt_nwait = NWAIT ;	/* for gdb macros */
+int pt_nwait = NWAIT ;              /* for gdb macros */
 
 /* Usually there is one instance for the overall system. */
 typedef struct protothread_s {
     void (*ready_function)(env_t) ; /* function to call when a thread becomes ready */
-    env_t ready_env ;		    /* environment to pass to ready_function() */
-    pt_thread_t *running ;	    /* current running protothread (if non-NULL) */
-    pt_thread_t *ready ;	    /* ready to run list (points to newest) */
-    pt_thread_t *wait[NWAIT] ;	    /* waiting for an event (points to newest) */
+    env_t ready_env ;               /* environment to pass to ready_function() */
+    pt_thread_t *running ;          /* current running protothread (if non-NULL) */
+    pt_thread_t *ready ;            /* ready to run list (points to newest) */
+    pt_thread_t *wait[NWAIT] ;      /* waiting for an event (points to newest) */
 } *state_t ;
 
 state_t
@@ -35,12 +35,12 @@ void
 protothread_free(state_t const s)
 {
     if (PT_DEBUG) {
-	int i ;
-	for (i = 0; i < NWAIT; i++) {
-	    pt_assert(s->wait[i] == NULL) ;
-	}
-	pt_assert(s->ready == NULL) ;
-	pt_assert(s->running == NULL) ;
+        int i ;
+        for (i = 0; i < NWAIT; i++) {
+            pt_assert(s->wait[i] == NULL) ;
+        }
+        pt_assert(s->ready == NULL) ;
+        pt_assert(s->running == NULL) ;
     }
     free(s) ;
 }
@@ -50,10 +50,10 @@ static inline void
 pt_link(pt_thread_t ** const head, pt_thread_t * const n)
 {
     if (*head) {
-	n->next = (*head)->next ;
-	(*head)->next = n ;
+        n->next = (*head)->next ;
+        (*head)->next = n ;
     } else {
-	n->next = n ;
+        n->next = n ;
     }
     *head = n ;
 }
@@ -65,12 +65,12 @@ pt_unlink(pt_thread_t ** const head, pt_thread_t * const prev)
     pt_thread_t * const next = prev->next ;
     prev->next = next->next ;
     if (next == prev) {
-	*head = NULL ;
+        *head = NULL ;
     } else if (next == *head) {
-	*head = prev ;
+        *head = prev ;
     }
     if (PT_DEBUG) {
-	next->next = NULL ;
+        next->next = NULL ;
     }
     return next ;
 }
@@ -87,7 +87,7 @@ protothread_run(state_t const s)
 {
     pt_assert(s->running == NULL) ;
     if (s->ready == NULL) {
-	return FALSE ;
+        return FALSE ;
     }
 
     /* unlink the oldest ready thread */
@@ -105,8 +105,8 @@ static void
 pt_add_ready(state_t const s, pt_thread_t * const t)
 {
     if (s->ready_function && !s->ready && !s->running) {
-	/* this should schedule protothread_run() */
-	s->ready_function(s->ready_env) ;
+        /* this should schedule protothread_run() */
+        s->ready_function(s->ready_env) ;
     }
     pt_link(&s->ready, t) ;
 }
@@ -121,11 +121,11 @@ protothread_set_ready_function(state_t const s, void (*f)(env_t), env_t env)
 /* This is called by pt_create(), not by user code directly */
 void
 pt_create_thread(
-	state_t const s,
-	pt_thread_t * const t,
-	pt_func_t * const pt_func,
-	pt_f_t const func,
-	env_t env
+        state_t const s,
+        pt_thread_t * const t,
+        pt_func_t * const pt_func,
+        pt_f_t const func,
+        env_t env
 ) {
     pt_func->thread = t ;
     pt_func->label = NULL ;
@@ -155,25 +155,25 @@ static void
 pt_wake(state_t const s, void * const channel, bool_t wake_one)
 {
     pt_thread_t ** const wq = pt_get_wait_list(s, channel) ;
-    pt_thread_t * prev = *wq ;	/* one before the oldest waiting thread */
+    pt_thread_t * prev = *wq ;  /* one before the oldest waiting thread */
 
     if (prev == NULL) {
-	return ;
+        return ;
     }
     do {
-	pt_thread_t * const t = prev->next ;
-	if (t->channel != channel) {
-	    /* advance to next thread on wait list */
-	    prev = t ;
-	    continue ;
-	}
-	/* wake up this thread (link to the ready list) */
-	pt_unlink(wq, prev) ;
-	pt_add_ready(s, t) ;
-	if (wake_one) {
-	    /* wake only the first found thread */
-	    break ;
-	}
+        pt_thread_t * const t = prev->next ;
+        if (t->channel != channel) {
+            /* advance to next thread on wait list */
+            prev = t ;
+            continue ;
+        }
+        /* wake up this thread (link to the ready list) */
+        pt_unlink(wq, prev) ;
+        pt_add_ready(s, t) ;
+        if (wake_one) {
+            /* wake only the first found thread */
+            break ;
+        }
     } while (*wq && prev != *wq) ;
 }
 

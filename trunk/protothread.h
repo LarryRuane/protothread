@@ -70,13 +70,13 @@ typedef pt_t (*pt_f_t)(env_t) ;
 /* One per thread:
  */
 typedef struct pt_thread_s {
-    struct pt_thread_s *next ;		/* next thread in wait or run list */
-    pt_f_t func ;			/* top level function */
-    env_t env ;				/* top level function's context */
-    void *channel ;			/* if waiting (never dereferenced) */
-    protothread_t s ;			/* pointer to state */
+    struct pt_thread_s * next ;         /* next thread in wait or run list */
+    pt_f_t func ;                       /* top level function */
+    env_t env ;                         /* top level function's context */
+    void *channel ;                     /* if waiting (never dereferenced) */
+    protothread_t s ;                   /* pointer to state */
 #if PT_DEBUG
-    struct pt_func_s * pt_func ;	/* top-level function's pt_func_t */
+    struct pt_func_s * pt_func ;        /* top-level function's pt_func_t */
 #endif
 } pt_thread_t ;
 
@@ -85,13 +85,13 @@ typedef struct pt_thread_s {
  * struct must contain one of these.
  */
 typedef struct pt_func_s {
-    pt_thread_t *thread ;
-    void *label ;		    /* function resume point (goto target) */
+    pt_thread_t * thread ;
+    void *label ;                   /* function resume point (goto target) */
 #if PT_DEBUG
-    struct pt_func_s * next ;	    /* pt_func of function that we called */
-    char const *file ;		    /* __FILE__ */
-    int line ;			    /* __LINE__ */
-    char const *function ;	    /* __FUNCTION__ */
+    struct pt_func_s * next ;       /* pt_func of function that we called */
+    char const * file ;             /* __FILE__ */
+    int line ;                      /* __LINE__ */
+    char const * function ;         /* __FUNCTION__ */
 #endif
 } pt_func_t ;
 
@@ -130,35 +130,35 @@ void pt_enqueue_wait(pt_thread_t * t, void * channel) ;
 /* Wait for a channel to be signaled */
 #define pt_wait(env, channel) \
     do { \
-	(env)->pt_func.label = &&PT_LABEL ; \
-	pt_enqueue_wait((env)->pt_func.thread, channel) ; \
-	pt_debug_wait(env) ; \
-	return PT_WAIT ; \
+        (env)->pt_func.label = &&PT_LABEL ; \
+        pt_enqueue_wait((env)->pt_func.thread, channel) ; \
+        pt_debug_wait(env) ; \
+        return PT_WAIT ; \
       PT_LABEL: ; \
     } while (0)
 
 /* Let other ready protothreads run, then resume this thread */
 #define pt_yield(env) \
     do { \
-	(env)->pt_func.label = &&PT_LABEL ; \
-	pt_enqueue_yield((env)->pt_func.thread) ; \
-	pt_debug_wait(env) ; \
-	return PT_WAIT ; \
+        (env)->pt_func.label = &&PT_LABEL ; \
+        pt_enqueue_yield((env)->pt_func.thread) ; \
+        pt_debug_wait(env) ; \
+        return PT_WAIT ; \
       PT_LABEL: ; \
     } while (0)
 
 /* Call a function (which may wait) */
 #define pt_call(env, child_func, child_env, ...) \
     do { \
-	(child_env)->pt_func.thread = (env)->pt_func.thread ; \
-	(child_env)->pt_func.label = NULL ; \
-	(env)->pt_func.label = NULL ; \
-	pt_debug_call(env, child_env) ; \
+        (child_env)->pt_func.thread = (env)->pt_func.thread ; \
+        (child_env)->pt_func.label = NULL ; \
+        (env)->pt_func.label = NULL ; \
+        pt_debug_call(env, child_env) ; \
       PT_LABEL: \
-	if (child_func(child_env, ##__VA_ARGS__).pt_rv == PT_WAIT.pt_rv) { \
-	    (env)->pt_func.label = &&PT_LABEL ; \
-	    return PT_WAIT ; \
-	} \
+        if (child_func(child_env, ##__VA_ARGS__).pt_rv == PT_WAIT.pt_rv) { \
+            (env)->pt_func.label = &&PT_LABEL ; \
+            return PT_WAIT ; \
+        } \
     } while (0)
 
 /* Did the most recent pt_call() block (break context)? */

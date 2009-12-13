@@ -24,9 +24,9 @@ typedef struct _pt_lock_env_t {
 
 /* per lock */
 typedef struct _pt_lock_t {
-    unsigned int nreaders ;		/* number of current readers */
-    unsigned int nwriters ;		/* number of current writers (zero or 1) */
-    pt_lock_env_t *waiting ;		/* waiting threads (environments) */
+    unsigned int nreaders ;             /* number of current readers */
+    unsigned int nwriters ;             /* number of current writers (zero or 1) */
+    pt_lock_env_t *waiting ;            /* waiting threads (environments) */
 } pt_lock_t ;
 
 void pt_lock_init(pt_lock_t *lock) ;
