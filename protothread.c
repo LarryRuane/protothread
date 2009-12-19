@@ -157,24 +157,25 @@ pt_wake(state_t const s, void * const channel, bool_t wake_one)
     pt_thread_t ** const wq = pt_get_wait_list(s, channel) ;
     pt_thread_t * prev = *wq ;  /* one before the oldest waiting thread */
 
-    if (prev == NULL) {
-        return ;
-    }
-    do {
+    while (*wq) {
         pt_thread_t * const t = prev->next ;
         if (t->channel != channel) {
             /* advance to next thread on wait list */
             prev = t ;
-            continue ;
+            /* looped back to start? done */
+            if (prev == *wq) {
+                break ;
+            }
+        } else {
+            /* wake up this thread (link to the ready list) */
+            pt_unlink(wq, prev) ;
+            pt_add_ready(s, t) ;
+            if (wake_one) {
+                /* wake only the first found thread */
+                break ;
+            }
         }
-        /* wake up this thread (link to the ready list) */
-        pt_unlink(wq, prev) ;
-        pt_add_ready(s, t) ;
-        if (wake_one) {
-            /* wake only the first found thread */
-            break ;
-        }
-    } while (*wq && prev != *wq) ;
+    }
 }
 
 void

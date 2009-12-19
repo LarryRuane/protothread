@@ -102,6 +102,7 @@ typedef struct wait_context_s {
     pt_thread_t pt_thread ;
     pt_func_t pt_func ;
     int i ;
+    void *wait;
 } wait_context_t ;
 
 static pt_t
@@ -111,7 +112,7 @@ wait_thr(env_t const env)
     pt_resume(c) ;
 
     for (c->i=0; c->i<10; c->i++) {
-        pt_wait(c, c) ;
+        pt_wait(c, c->wait) ;
     }
     return PT_DONE ;
 }
@@ -120,29 +121,49 @@ static void
 test_wait(void)
 {
     protothread_t const pt = protothread_create() ;
-    wait_context_t * const c = malloc(sizeof(*c)) ;
+    wait_context_t * c[10];
     int i ;
+    int j ;
 
-    c->i = -1 ;     /* invalid value */
-    pt_create(pt, &c->pt_thread, wait_thr, c) ;
+    for (j = 0; j < 10; j++) {
+        c[j] = malloc(sizeof(*(c[j]))) ;
+        c[j]->i = -1;
+        c[j]->wait = (void *)&pt;
+        pt_create(pt, &c[j]->pt_thread, wait_thr, c[j]) ;
+    }
 
     /* it hasn't run yet at all, make it reach the wait */
-    protothread_run(pt) ;
+    for (j = 0; j < 10; j++) {
+        protothread_run(pt) ;
+    }
 
     for (i = 0; i < 10; i++) {
-        assert(i == c->i) ;
-        pt_broadcast(pt, c) ;
-        assert(i == c->i) ;
-        protothread_run(pt) ;
-        assert(i+1 == c->i) ;
+        for (j = 0; j < 10; j++) {
+            assert(i == c[j]->i) ;
+        }
+        pt_broadcast(pt, (void *)&pt) ;
+        for (j = 0; j < 10; j++) {
+            assert(i == c[j]->i) ;
+        }
+        for (j = 0; j < 10; j++) {
+            protothread_run(pt) ;
+        }
+        for (j = 0; j < 10; j++) {
+            assert(i+1 == c[j]->i) ;
+        }
 
         /* extra steps and wrong signals shouldn't advance the thread */
         protothread_run(pt) ;
-        pt_broadcast(pt, &c[1]) ;
+        pt_broadcast(pt, c[0]) ;
         protothread_run(pt) ;
-        assert(i+1 == c->i) ;
+        for (j = 0; j < 10; j++) {
+            assert(i+1 == c[j]->i) ;
+        }
     }
-    free(c) ;
+
+    for (j = 0; j < 10; j++) {
+        free(c[j]) ;
+    }
     protothread_free(pt) ;
 }
 
