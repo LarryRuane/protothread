@@ -273,29 +273,30 @@ test_pc_big(void)
 {
     protothread_t const pt = protothread_create() ;
     int mailbox[400] ;
+    pc_thread_context_t * const pc = malloc(sizeof(*pc) * 400) ;
+    pc_thread_context_t * const cc = malloc(sizeof(*cc) * 400) ;
     int i ;
 
     /* Start 400 independent pairs of threads, each pair sharing a
      * mailbox.
      */
     for (i = 0; i < 400; i++) {
-        pc_thread_context_t * const cc = malloc(sizeof(*cc)) ;
-        pc_thread_context_t * const pc = malloc(sizeof(*pc)) ;
-
         mailbox[i] = 0 ;
 
-        cc->mailbox = &mailbox[i] ;
-        cc->i = 0 ;
-        pt_create(pt, &cc->pt_thread, consumer_thr, cc) ;
+        cc[i].mailbox = &mailbox[i] ;
+        cc[i].i = 0 ;
+        pt_create(pt, &cc[i].pt_thread, consumer_thr, &cc[i]) ;
 
-        pc->mailbox = &mailbox[i] ;
-        pc->i = 0 ;
-        pt_create(pt, &pc->pt_thread, producer_thr, pc) ;
+        pc[i].mailbox = &mailbox[i] ;
+        pc[i].i = 0 ;
+        pt_create(pt, &pc[i].pt_thread, producer_thr, &pc[i]) ;
     }
 
     /* as long as there is work to do */
     while (protothread_run(pt)) ;
 
+    free(cc) ;
+    free(pc) ;
     protothread_free(pt) ;
 }
 
