@@ -114,7 +114,7 @@ typedef struct wait_context_s {
     pt_thread_t pt_thread ;
     pt_func_t pt_func ;
     int i ;
-    void *wait;
+    void *wait ;
 } wait_context_t ;
 
 static pt_t
@@ -133,14 +133,14 @@ static void
 test_wait(void)
 {
     protothread_t const pt = protothread_create() ;
-    wait_context_t * c[10];
+    wait_context_t * c[10] ;
     int i ;
     int j ;
 
     for (j = 0; j < 10; j++) {
         c[j] = malloc(sizeof(*(c[j]))) ;
-        c[j]->i = -1;
-        c[j]->wait = (void *)&pt;
+        c[j]->i = -1 ;
+        c[j]->wait = (void *)&pt ;
         pt_create(pt, &c[j]->pt_thread, wait_thr, c[j]) ;
     }
 
@@ -190,8 +190,8 @@ test_wait(void)
 typedef struct pc_thread_context_s {
     pt_thread_t pt_thread ;
     pt_func_t pt_func ;
-    int * mailbox;      /* pointer to (shared) mailbox */
-    int i;              /* next value to send or expect to receive */
+    int * mailbox ;     /* pointer to (shared) mailbox */
+    int i ;             /* next value to send or expect to receive */
 } pc_thread_context_t ;
 
 static int N = 1000 ;
@@ -260,8 +260,8 @@ test_pc(void)
     while (protothread_run(pt)) ;
 
     /* threads have completed */
-    assert(cc->i == N+1);
-    assert(pc->i == N+1);
+    assert(cc->i == N+1) ;
+    assert(pc->i == N+1) ;
 
     free(cc) ;
     free(pc) ;
@@ -510,7 +510,7 @@ lock_trc(char const * str, int id) {
         printf("%s%d ", str, id-1) ;
         if (++n > 16) {
             n = 0 ;
-            printf("\n");
+            printf("\n") ;
         }
     }
 }
