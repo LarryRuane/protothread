@@ -15,10 +15,44 @@
 typedef enum bool_e { FALSE, TRUE } bool_t ;
 typedef void * env_t ;
 
-/* Usually there is one instance for the overall system. */
-typedef struct protothread_s *protothread_t ;
+/* Number of wait queues (size of wait hash table), power of 2 */
+#define PT_NWAIT (1 << 4)
+
+/* Usually there is one instance of struct protothread_s for
+ * the overall system.
+ */
+typedef struct pt_thread_s pt_thread_t ;
+typedef struct protothread_s {
+    void (*ready_function)(env_t) ; /* function to call when a thread becomes ready */
+    env_t ready_env ;		    /* environment to pass to ready_function() */
+    pt_thread_t *running ;	    /* current running protothread (if non-NULL) */
+    pt_thread_t *ready ;	    /* ready to run list (points to newest) */
+    pt_thread_t *wait[PT_NWAIT] ;	    /* waiting for an event (points to newest) */
+} *protothread_t ;
+
+/* Dynamic creation of the protothread system:
+ *
+ * To allocate the protothread system dynamically, use
+ * protothread_create() to create and initialize the
+ * protothread system.
+ *
+ * protothread_free() can be used to free the memory
+ * allocated by protothread_create().
+ */
 protothread_t protothread_create(void) ;
 void protothread_free(protothread_t protothread) ;
+
+/* Static creation of the protothread system:
+ *
+ * To allocate the protothread system statically,
+ * create a struct protothread_s and initialize it
+ * with protothread_init().
+ *
+ * protothread_deinit() should be called to
+ * safely deinitialize the protothread system.
+ */
+void protothread_init(protothread_t protothread) ;
+void protothread_deinit(protothread_t protothread) ;
 
 /* Run a waiting protothread and return TRUE
  * (if no threads are ready, does nothing and returns FALSE).
@@ -69,7 +103,7 @@ typedef pt_t (*pt_f_t)(env_t) ;
 
 /* One per thread:
  */
-typedef struct pt_thread_s {
+struct pt_thread_s {
     struct pt_thread_s * next ;         /* next thread in wait or run list */
     pt_f_t func ;                       /* top level function */
     env_t env ;                         /* top level function's context */
@@ -78,7 +112,7 @@ typedef struct pt_thread_s {
 #if PT_DEBUG
     struct pt_func_s * pt_func ;        /* top-level function's pt_func_t */
 #endif
-} pt_thread_t ;
+} ;
 
 
 /* One of these per nested function (call frame); every function environment
