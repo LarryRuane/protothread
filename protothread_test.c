@@ -15,11 +15,23 @@
 /******************************************************************************/
 
 static void
-test_create(void)
+test_create_dynamic(void)
 {
     protothread_t const pt = protothread_create() ;
     protothread_run(pt) ;
     protothread_free(pt) ;
+}
+
+/******************************************************************************/
+
+static void
+test_create_static(void)
+{
+    struct protothread_s static_pt ;
+    protothread_t const pt = &static_pt ;
+    protothread_init(pt) ;
+    protothread_run(pt) ;
+    protothread_deinit(pt) ;
 }
 
 /******************************************************************************/
@@ -715,7 +727,8 @@ test_ready(void)
 int
 main(int argc, char **argv)
 {
-    test_create() ;
+    test_create_dynamic() ;
+    test_create_static() ;
     test_thread_create() ;
     test_yield() ;
     test_wait() ;

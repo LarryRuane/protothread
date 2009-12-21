@@ -10,39 +10,42 @@
 
 #include "protothread.h"
 
-/* Number of wait queues (size of wait hash table), power of 2 */
-#define NWAIT (1 << 4)
-int pt_nwait = NWAIT ;              /* for gdb macros */
+int pt_nwait = PT_NWAIT ;              /* for gdb macros */
 
-/* Usually there is one instance for the overall system. */
-typedef struct protothread_s {
-    void (*ready_function)(env_t) ; /* function to call when a thread becomes ready */
-    env_t ready_env ;               /* environment to pass to ready_function() */
-    pt_thread_t *running ;          /* current running protothread (if non-NULL) */
-    pt_thread_t *ready ;            /* ready to run list (points to newest) */
-    pt_thread_t *wait[NWAIT] ;      /* waiting for an event (points to newest) */
-} *state_t ;
+typedef struct protothread_s *state_t ;
 
 state_t
 protothread_create(void)
 {
     state_t const s = malloc(sizeof(*s)) ;
-    memset(s, 0, sizeof(*s)) ;
+    protothread_init(s) ;
     return s ;
 }
 
 void
 protothread_free(state_t const s)
 {
+    protothread_deinit(s) ;
+    free(s) ;
+}
+
+void
+protothread_init(state_t const s)
+{
+    memset(s, 0, sizeof(*s)) ;
+}
+
+void
+protothread_deinit(state_t const s)
+{
     if (PT_DEBUG) {
         int i ;
-        for (i = 0; i < NWAIT; i++) {
+        for (i = 0; i < PT_NWAIT; i++) {
             pt_assert(s->wait[i] == NULL) ;
         }
         pt_assert(s->ready == NULL) ;
         pt_assert(s->running == NULL) ;
     }
-    free(s) ;
 }
 
 /* link thread as the newest in the given (ready or wait) list */
@@ -145,7 +148,7 @@ pt_create_thread(
 static inline pt_thread_t **
 pt_get_wait_list(state_t const s, void * chan)
 {
-    return &s->wait[((uintptr_t)chan >> 4) & (NWAIT-1)] ;
+    return &s->wait[((uintptr_t)chan >> 4) & (PT_NWAIT-1)] ;
 }
 
 /* Make the thread or threads that are waiting on the given
