@@ -155,7 +155,7 @@ pt_get_wait_list(state_t const s, void * chan)
  * channel (if any) runnable.
  */
 static void
-pt_wake(state_t const s, void * const channel, bool_t wake_one)
+pt_wake(state_t const s, void * const channel, bool_t const wake_one)
 {
     pt_thread_t ** const wq = pt_get_wait_list(s, channel) ;
     pt_thread_t * prev = *wq ;  /* one before the oldest waiting thread */
