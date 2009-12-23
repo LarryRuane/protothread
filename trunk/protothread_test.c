@@ -58,7 +58,7 @@ test_thread_create(void)
     int i ;
     create_context_t * const c = malloc(sizeof(*c)) ;
 
-    for (i=0; i<1000; i++) {
+    for (i = 0; i < 1000; i++) {
         pt_create(pt, &c->pt_thread, create_thr, c) ;
         protothread_run(pt) ;
     }
@@ -114,7 +114,6 @@ typedef struct wait_context_s {
     pt_thread_t pt_thread ;
     pt_func_t pt_func ;
     int i ;
-    void *wait ;
 } wait_context_t ;
 
 static pt_t
@@ -123,8 +122,8 @@ wait_thr(env_t const env)
     wait_context_t * const c = env ;
     pt_resume(c) ;
 
-    for (c->i=0; c->i<10; c->i++) {
-        pt_wait(c, c->wait) ;
+    for (c->i = 0; c->i < 10; c->i++) {
+        pt_wait(c, NULL) ;
     }
     return PT_DONE ;
 }
@@ -140,11 +139,10 @@ test_wait(void)
     for (j = 0; j < 10; j++) {
         c[j] = malloc(sizeof(*(c[j]))) ;
         c[j]->i = -1 ;
-        c[j]->wait = (void *)&pt ;
         pt_create(pt, &c[j]->pt_thread, wait_thr, c[j]) ;
     }
 
-    /* it hasn't run yet at all, make it reach the wait */
+    /* threads haven't run yet at all, make them reach the wait */
     for (j = 0; j < 10; j++) {
         protothread_run(pt) ;
     }
@@ -153,10 +151,14 @@ test_wait(void)
         for (j = 0; j < 10; j++) {
             assert(i == c[j]->i) ;
         }
-        pt_broadcast(pt, (void *)&pt) ;
+
+        /* make threads runnable, but do not actually run the threads */
+        pt_broadcast(pt, NULL) ;
         for (j = 0; j < 10; j++) {
             assert(i == c[j]->i) ;
         }
+
+        /* run each thread once */
         for (j = 0; j < 10; j++) {
             protothread_run(pt) ;
         }
@@ -181,6 +183,90 @@ test_wait(void)
 
 /******************************************************************************/
 
+/* make sure that broadcast wakes up all the threads it should,
+ * none of the threads it shouldn't
+ */
+#define N 1000
+
+typedef struct broadcast_context_s {
+    pt_thread_t pt_thread ;
+    pt_func_t pt_func ;
+    struct broadcast_global_context_s * gc ;
+    void * chan ;
+    void * prev ;
+    int count ;
+} broadcast_context_t ;
+
+typedef struct broadcast_global_context_s {
+    struct broadcast_context_s c[N] ;
+    int count ;
+    bool_t done ;
+} broadcast_global_context_t ;
+
+static pt_t
+broadcast_thr(env_t const env)
+{
+    broadcast_context_t * const c = env ;
+    broadcast_global_context_t * const gc = c->gc ;
+    pt_resume(c) ;
+
+    while (!gc->done) {
+        /* the /3 ensures multiple threads wait on the same chan */
+        c->chan = &gc->c[(random() % N)/3] ;
+        pt_wait(c, c->chan) ;
+        c->prev = c->chan ;
+        c->count = gc->count ;
+    }
+    return PT_DONE ;
+}
+
+static void
+test_broadcast(void)
+{
+    protothread_t const pt = protothread_create() ;
+    broadcast_global_context_t gc ;
+    int i, j, k ;
+
+    srand(0) ;
+    memset(&gc, 0, sizeof(gc)) ;
+    for (j = 0; j < N; j++) {
+        gc.c[j].gc = &gc ;
+        pt_create(pt, &gc.c[j].pt_thread, broadcast_thr, &gc.c[j]) ;
+    }
+
+    /* threads haven't run yet at all, make them reach the wait */
+    for (j = 0; j < N; j++) {
+        protothread_run(pt) ;
+    }
+
+    for (i = 0; i < 100; i++) {
+        for (j = 0; j < N; j++) {
+            gc.count ++ ;
+            pt_broadcast(pt, &gc.c[j]) ;
+            while (protothread_run(pt)) ;
+            for (k = 0; k < N; k++) {
+                if (gc.c[k].prev == &gc.c[j]) {
+                    /* should have run */
+                    assert(gc.c[k].count == gc.count) ;
+                } else {
+                    /* should NOT have run */
+                    assert(gc.c[k].count < gc.count) ;
+                }
+            }
+        } 
+    }
+    gc.done = TRUE ;
+    for (j = 0; j < N; j++) {
+        pt_broadcast(pt, &gc.c[j]) ;
+    }
+    while (protothread_run(pt)) ;
+    protothread_free(pt) ;
+}
+
+#undef N
+
+/******************************************************************************/
+
 /* Producer-comsumer
  *
  * Every thread needs a pt_thread_t; every thread function (including
@@ -194,7 +280,7 @@ typedef struct pc_thread_context_s {
     int i ;             /* next value to send or expect to receive */
 } pc_thread_context_t ;
 
-static int N = 1000 ;
+#define N 1000
 
 /* The producer thread waits until the mailbox is empty, and then writes 
  * the next value to the mailbox and pokes the consumer.
@@ -299,6 +385,8 @@ test_pc_big(void)
     free(pc) ;
     protothread_free(pt) ;
 }
+
+#undef N
 
 /******************************************************************************/
 
@@ -602,6 +690,8 @@ test_lock(void)
     protothread_free(pt) ;
 }
 
+#undef LOCK_NTHREADS
+
 /******************************************************************************/
 
 typedef struct func_pointer_context_s {
@@ -733,6 +823,7 @@ main(int argc, char **argv)
     test_thread_create() ;
     test_yield() ;
     test_wait() ;
+    test_broadcast() ;
     test_pc() ;
     test_pc_big() ;
     test_recursive() ;
