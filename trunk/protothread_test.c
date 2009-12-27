@@ -193,8 +193,7 @@ typedef struct broadcast_context_s {
     pt_func_t pt_func ;
     struct broadcast_global_context_s * gc ;
     void * chan ;
-    void * prev ;
-    int count ;
+    bool_t run ;
 } broadcast_context_t ;
 
 typedef struct broadcast_global_context_s {
@@ -210,12 +209,15 @@ broadcast_thr(env_t const env)
     broadcast_global_context_t * const gc = c->gc ;
     pt_resume(c) ;
 
-    while (!gc->done) {
+    while (TRUE) {
         /* the /3 ensures multiple threads wait on the same chan */
         c->chan = &gc->c[(random() % N)/3] ;
         pt_wait(c, c->chan) ;
-        c->prev = c->chan ;
-        c->count = gc->count ;
+	if (gc->done) {
+	    break ;
+	}
+	assert(c->run) ;
+	c->run = FALSE ;
     }
     return PT_DONE ;
 }
@@ -225,7 +227,7 @@ test_broadcast(void)
 {
     protothread_t const pt = protothread_create() ;
     broadcast_global_context_t gc ;
-    int i, j, k ;
+    int i, j ;
 
     srand(0) ;
     memset(&gc, 0, sizeof(gc)) ;
@@ -239,20 +241,20 @@ test_broadcast(void)
         protothread_run(pt) ;
     }
 
-    for (i = 0; i < 100; i++) {
+    for (i = 0; i < 10000; i++) {
+        broadcast_context_t * const chan = &gc.c[(random() % N)/3] ;
+        pt_broadcast(pt, chan) ;
         for (j = 0; j < N; j++) {
-            gc.count ++ ;
-            pt_broadcast(pt, &gc.c[j]) ;
-            while (protothread_run(pt)) ;
-            for (k = 0; k < N; k++) {
-                if (gc.c[k].prev == &gc.c[j]) {
-                    /* should have run */
-                    assert(gc.c[k].count == gc.count) ;
-                } else {
-                    /* should NOT have run */
-                    assert(gc.c[k].count < gc.count) ;
-                }
-            }
+            if (gc.c[j].chan == chan) {
+		/* should run */
+		gc.c[j].run = TRUE ;
+	    }
+	}
+        while (protothread_run(pt)) ;
+
+	/* make sure every tread that should have run did run */
+        for (j = 0; j < N; j++) {
+            assert(!gc.c[j].run) ;
         } 
     }
     gc.done = TRUE ;
