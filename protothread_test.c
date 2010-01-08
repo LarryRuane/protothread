@@ -842,7 +842,7 @@ static void
 test_kill(void)
 {
     protothread_t const pt = protothread_create() ;
-    ready_context_t * const c = calloc(2, sizeof(*c)) ;
+    kill_context_t * const c = calloc(2, sizeof(*c)) ;
     bool_t more ;
 
     /* Create the thread, kill it while it is in the run queue and make
@@ -907,7 +907,7 @@ test_kill(void)
     more = protothread_run(pt) ;
     assert(!more) ;
 
-    free(&c[0]) ;
+    free(c) ;
     protothread_free(pt) ;
 }
 
