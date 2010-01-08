@@ -85,6 +85,32 @@ pt_unlink_oldest(pt_thread_t ** const head)
     return pt_unlink(head, *head) ;
 }
 
+/* finds thread <n> in list <head> and unlinks it.  Returns TRUE if
+ * it was found.
+ */
+static inline bool_t
+pt_find_and_unlink(pt_thread_t ** const head, pt_thread_t * const n)
+{
+    pt_thread_t * prev = *head ;
+
+    while (*head) {
+        pt_thread_t * const t = prev->next ;
+        if (n != t) {
+            /* Advance to next thread */
+            prev = t ;
+            /* looped back to start? finished */
+            if (prev == *head) {
+                break ;
+            }
+        } else {
+            pt_unlink(head, prev) ;
+            return TRUE ;
+        }
+    }
+
+    return FALSE ;
+}
+
 bool_t
 protothread_run(state_t const s)
 {
@@ -135,6 +161,7 @@ pt_create_thread(
     t->func = func ;
     t->env = env ;
     t->s = s ;
+    t->channel = NULL ;
 #if PT_DEBUG
     t->pt_func = pt_func ;
     t->next = NULL ;
@@ -191,6 +218,22 @@ void
 pt_broadcast(state_t const s, void * const channel)
 {
     pt_wake(s, channel, FALSE) ;
+}
+
+bool_t
+pt_kill(pt_thread_t * const t)
+{
+    state_t const s = t->s ;
+    pt_assert(s->running != t) ;
+
+    if (!pt_find_and_unlink(&s->ready, t)) {
+        pt_thread_t ** const wq = pt_get_wait_list(s, t->channel) ;
+        if (!pt_find_and_unlink(wq, t)) {
+            return FALSE ;
+        }
+    }
+
+    return TRUE ;
 }
 
 /* should only be called by the macro pt_yield() */

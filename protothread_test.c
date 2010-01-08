@@ -817,6 +817,102 @@ test_ready(void)
 
 /******************************************************************************/
 
+typedef struct kill_context_s {
+    pt_thread_t pt_thread ;
+    pt_func_t pt_func ;
+} kill_context_t ;
+
+static pt_t
+kill_thr(env_t const env)
+{
+    kill_context_t * const c = env ;
+    pt_resume(c) ;
+
+    pt_yield(c) ;
+    pt_wait(c, c) ;
+
+    while (1) {
+        pt_yield(c) ;
+    }
+
+    return PT_DONE ;
+}
+
+static void
+test_kill(void)
+{
+    protothread_t const pt = protothread_create() ;
+    ready_context_t * const c = calloc(2, sizeof(*c)) ;
+    bool_t more ;
+
+    /* Create the thread, kill it while it is in the run queue and make
+     * sure it didn't run.
+     */
+    pt_create(pt, &c[0].pt_thread, kill_thr, &c[0]) ;
+    pt_kill(&c[0].pt_thread) ;
+    more = protothread_run(pt) ;
+    assert(!more) ;
+
+    /* Try to kill it one more time, just for giggles.  This may not cause any
+     * apparent problems, but memory-checker tools like valgrind will flag
+     * any problems created here.
+     */
+    assert(!pt_kill(&c[0].pt_thread)) ;
+
+    /* Create the thread, wait until it is in the wait queue, wake it,
+     * kill it and make sure it isn't scheduled any longer.
+     *
+     * This actually tests killing while in the run queue (thus the same
+     * test as above), but helps justify the following test.
+     */
+    pt_create(pt, &c[0].pt_thread, kill_thr, &c[0]) ;
+    more = protothread_run(pt) ;
+    assert(more) ;
+    more = protothread_run(pt) ;
+    assert(!more) ;
+    pt_broadcast(pt, &c[0]) ;
+    more = protothread_run(pt) ;
+    assert(more) ;
+    assert(pt_kill(&c[0].pt_thread)) ;
+    more = protothread_run(pt) ;
+    assert(!more) ;
+
+    /* Create the thread, wait until it is in the wait queue, kill it,
+     * wake it and make sure it never scheduled again.
+     */
+    pt_create(pt, &c[0].pt_thread, kill_thr, &c[0]) ;
+    more = protothread_run(pt) ;
+    assert(more) ;
+    more = protothread_run(pt) ;
+    assert(!more) ;
+    assert(pt_kill(&c[0].pt_thread)) ;
+    pt_broadcast(pt, &c[0]) ;
+    more = protothread_run(pt) ;
+    assert(!more) ;
+
+    /* Create two threads, delete them one way and then
+     * delete them the other way.
+     */
+    pt_create(pt, &c[0].pt_thread, kill_thr, &c[0]) ;
+    pt_create(pt, &c[1].pt_thread, kill_thr, &c[1]) ;
+    assert(pt_kill(&c[0].pt_thread)) ;
+    assert(pt_kill(&c[1].pt_thread)) ;
+    more = protothread_run(pt) ;
+    assert(!more) ;
+
+    pt_create(pt, &c[0].pt_thread, kill_thr, &c[0]) ;
+    pt_create(pt, &c[1].pt_thread, kill_thr, &c[1]) ;
+    assert(pt_kill(&c[1].pt_thread)) ;
+    assert(pt_kill(&c[0].pt_thread)) ;
+    more = protothread_run(pt) ;
+    assert(!more) ;
+
+    free(&c[0]) ;
+    protothread_free(pt) ;
+}
+
+/******************************************************************************/
+
 int
 main(int argc, char **argv)
 {
@@ -833,6 +929,7 @@ main(int argc, char **argv)
     test_lock() ;
     test_func_pointer() ;
     test_ready() ;
+    test_kill() ;
 
     return 0 ;
 }
