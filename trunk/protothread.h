@@ -132,6 +132,12 @@ typedef struct pt_func_s {
 /* This should be at the beginning of every protothread function */
 #define pt_resume(c) if ((c)->pt_func.label) goto *(c)->pt_func.label
 
+/* This is used to prevent a thread from scheduling again.  This can be
+ * very dangerous if the thread in question isn't written to expect this
+ * operation.
+ */
+bool_t pt_kill(pt_thread_t * t) ;
+
 /* These should only be called by the following pt macros */
 void pt_enqueue_yield(pt_thread_t * t) ;
 void pt_enqueue_wait(pt_thread_t * t, void * channel) ;
