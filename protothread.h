@@ -132,6 +132,9 @@ typedef struct pt_func_s {
 /* This should be at the beginning of every protothread function */
 #define pt_resume(c) if ((c)->pt_func.label) goto *(c)->pt_func.label
 
+/* This can be used to reset a thread or thread function */
+#define pt_reset(c) do { (c)->pt_func.label = NULL ; } while (0)
+
 /* This is used to prevent a thread from scheduling again.  This can be
  * very dangerous if the thread in question isn't written to expect this
  * operation.

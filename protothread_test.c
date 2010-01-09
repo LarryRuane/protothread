@@ -913,6 +913,55 @@ test_kill(void)
 
 /******************************************************************************/
 
+typedef struct reset_context_s {
+    pt_thread_t pt_thread ;
+    pt_func_t pt_func ;
+    unsigned i ;
+} reset_context_t ;
+
+static pt_t
+reset_thr(env_t const env)
+{
+    reset_context_t * const c = env ;
+
+    pt_resume(c) ;
+
+    for (c->i = 0; c->i < 5; c->i++) {
+        pt_yield(c) ;
+    }
+
+    return PT_DONE ;
+}
+
+static void
+test_reset(void)
+{
+    protothread_t const pt = protothread_create() ;
+    reset_context_t * const c = calloc(1, sizeof(*c)) ;
+
+    /* Start running the thread and then make sure we
+     * can really reset the thread location
+     */
+    pt_create(pt, &c->pt_thread, reset_thr, c) ;
+
+    protothread_run(pt) ;
+    assert(c->i == 0) ;
+
+    protothread_run(pt) ;
+    assert(c->i == 1) ;
+    pt_reset(c) ;
+
+    protothread_run(pt) ;
+    assert(c->i == 0) ;
+
+    while (protothread_run(pt)) ;
+
+    free(c) ;
+    protothread_free(pt) ;
+}
+
+/******************************************************************************/
+
 int
 main(int argc, char **argv)
 {
@@ -930,6 +979,7 @@ main(int argc, char **argv)
     test_func_pointer() ;
     test_ready() ;
     test_kill() ;
+    test_reset() ;
 
     return 0 ;
 }
