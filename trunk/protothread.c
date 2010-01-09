@@ -255,11 +255,3 @@ pt_enqueue_wait(pt_thread_t * const t, void * const channel)
     t->channel = channel ;
     pt_link(wq, t) ;
 }
-
-/* This allows protothreads (which might not have an explicit pointer to the
- * protothread object) to call pt_create(), pt_signal() or pt_broadcast().
- */
-protothread_t
-pt_get_protothread(pt_func_t const pt_func) {
-    return pt_func.thread->s ;
-}

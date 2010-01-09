@@ -214,7 +214,10 @@ void pt_broadcast(protothread_t pt, void * channel) ;
 /* This allows protothreads (which might not have an explicit pointer to the
  * protothread object) to call pt_create(), pt_signal() or pt_broadcast().
  */
-protothread_t pt_get_protothread(pt_func_t pt_func) ;
+static inline protothread_t
+pt_get_protothread(pt_func_t const pt_func) {
+    return pt_func.thread->s ;
+}
 #define pt_get_pt(env) pt_get_protothread((env)->pt_func)
 
 #endif /* PROTOTHREAD_H */
