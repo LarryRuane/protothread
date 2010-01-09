@@ -7,10 +7,6 @@
 #*
 #* PT_DEBUG must be defined as 1 in protothread.h
 #*
-#* Assumes pointers are 32 bits; if using 64-bit pointers,
-#* change %x to %llx (might have been better to not print
-#* pointers at all).
-#*
 #**************************************************************
 
 define ptbt
@@ -23,7 +19,7 @@ define ptbt
     set $pte = &$arg0->pt_func
     set $j = 0
     while ($pte && $pte->label)
-        printf "#%d %s (0x%x) at %s:%d\n", $j, $pte->function, (int)$pte, $pte->file, $pte->line
+        printf "#%d %s (%p) at %s:%d\n", $j, $pte->function, $pte, $pte->file, $pte->line
         set $pte = $pte->next
         set $j++
     end
@@ -35,13 +31,13 @@ end
 
 define ptbtall
     if ($arg0->running)
-        printf "\nstate: running p *(struct pt_thread_s *)0x%x\n", $arg0->running
+        printf "\nstate: running p *(struct pt_thread_s *)%p\n", $arg0->running
         ptbt $arg0->running
     end
     set $pt = $arg0->ready
     while ($pt)
         set $pt = $pt->next
-        printf "\nstate: ready_to_run p *(struct pt_thread_s *)0x%x\n", $pt
+        printf "\nstate: ready_to_run p *(struct pt_thread_s *)%p\n", $pt
         ptbt $pt
         if ($pt == $arg0->ready)
             set $pt = 0
@@ -49,11 +45,12 @@ define ptbtall
     end
 
     set $i = 0
-    while ($i < pt_nwait)
+    set $nwait = sizeof($arg0->wait) / sizeof($arg0->wait[0])
+    while ($i < $nwait)
         set $pt = $arg0->wait[$i]
         while ($pt)
             set $pt = $pt->next
-            printf "\nstate: wait p *(struct pt_thread_s *)0x%x\n", $pt
+            printf "\nstate: wait p *(struct pt_thread_s *)%p\n", $pt
             ptbt $pt
             if ($pt == $arg0->wait[$i])
                 set $pt = 0

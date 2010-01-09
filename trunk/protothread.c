@@ -10,8 +10,6 @@
 
 #include "protothread.h"
 
-int pt_nwait = PT_NWAIT ;              /* for gdb macros */
-
 typedef struct protothread_s *state_t ;
 
 state_t
