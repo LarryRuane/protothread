@@ -9,7 +9,7 @@
 #ifndef PT_DEBUG
 #define PT_DEBUG 1  /* enabled (else 0) */
 #endif
-#define pt_assert(condition) if (PT_DEBUG) assert(condition)
+#define pt_assert(condition) do { if (PT_DEBUG) assert(condition) ; } while (0)
 
 /* standard definitions */
 typedef enum bool_e { FALSE, TRUE } bool_t ;
@@ -130,7 +130,7 @@ typedef struct pt_func_s {
 } pt_func_t ;
 
 /* This should be at the beginning of every protothread function */
-#define pt_resume(c) if ((c)->pt_func.label) goto *(c)->pt_func.label
+#define pt_resume(c) do { if ((c)->pt_func.label) goto *(c)->pt_func.label ; } while (0)
 
 /* This can be used to reset a thread or thread function */
 #define pt_reset(c) do { (c)->pt_func.label = NULL ; } while (0)
@@ -155,18 +155,21 @@ void pt_enqueue_wait(pt_thread_t * t, void * channel) ;
 #define pt_debug_wait(env)
 #define pt_debug_call(env, child_env)
 #else
-#define pt_debug_save(env) \
+#define pt_debug_save(env) do { \
     (env)->pt_func.file = __FILE__ ; \
     (env)->pt_func.line = __LINE__ ; \
-    (env)->pt_func.function = __func__
+    (env)->pt_func.function = __func__ ; \
+} while (0)
 
-#define pt_debug_wait(env) \
+#define pt_debug_wait(env) do { \
     pt_debug_save(env) ; \
-    (env)->pt_func.next = NULL
+    (env)->pt_func.next = NULL ; \
+} while (0)
 
-#define pt_debug_call(env, child_env) \
+#define pt_debug_call(env, child_env) do { \
     pt_debug_save(env) ; \
-    (env)->pt_func.next = &(child_env)->pt_func
+    (env)->pt_func.next = &(child_env)->pt_func ; \
+} while (0)
 
 #endif
 
