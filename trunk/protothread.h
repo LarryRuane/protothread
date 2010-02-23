@@ -221,7 +221,7 @@ void pt_broadcast(protothread_t pt, void * channel) ;
  * protothread object) to call pt_create(), pt_signal() or pt_broadcast().
  */
 static inline protothread_t
-pt_get_protothread(const pt_func_t const * pt_func) {
+pt_get_protothread(pt_func_t const * pt_func) {
     return pt_func->thread->s ;
 }
 #define pt_get_pt(env) pt_get_protothread(&(env)->pt_func)
