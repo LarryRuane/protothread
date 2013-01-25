@@ -1,7 +1,7 @@
 CC = gcc
-LD = gcc
+LD = gcc -pthread
 AR = ar
-CFLAGS = -g -Wall
+CFLAGS = -g -Wall -m64
 
 prefix = /usr/local
 bindir = $(prefix)/bin
@@ -22,13 +22,10 @@ SRCDIR = .
 TARGETS = pttest libprotothread.a
 
 LIB_OBJS = \
-       protothread_lock.o \
-       protothread_sem.o \
        protothread.o \
 
 OBJS = $(LIB_OBJS) \
        protothread_test.o
-
 
 .PHONY: all clean install
 
