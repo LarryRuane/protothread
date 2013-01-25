@@ -6,6 +6,8 @@
 #ifndef PROTOTHREAD_H
 #define PROTOTHREAD_H
 
+#include <pthread.h>
+
 #ifndef PT_DEBUG
 #define PT_DEBUG 1  /* enabled (else 0) */
 #endif
@@ -16,7 +18,7 @@ typedef enum bool_e { FALSE, TRUE } bool_t ;
 typedef void * env_t ;
 
 /* Number of wait queues (size of wait hash table), power of 2 */
-#define PT_NWAIT (1 << 4)
+#define PT_NWAIT (1 << 12)
 
 /* Usually there is one instance of struct protothread_s for
  * the overall system.
@@ -25,9 +27,11 @@ typedef struct pt_thread_s pt_thread_t ;
 typedef struct protothread_s {
     void (*ready_function)(env_t) ; /* function to call when a thread becomes ready */
     env_t ready_env ;               /* environment to pass to ready_function() */
-    pt_thread_t *running ;          /* current running protothread (if non-NULL) */
+    unsigned int nrunning ;         /* number of current running protothreads */
+    unsigned int nthread ;          /* total number of protothreads */
     pt_thread_t *ready ;            /* ready to run list (points to newest) */
     pt_thread_t *wait[PT_NWAIT] ;   /* waiting for an event (points to newest) */
+    pthread_mutex_t mutex ;
 } *protothread_t ;
 
 /* Dynamic creation of the protothread system:
@@ -58,6 +62,7 @@ void protothread_deinit(protothread_t protothread) ;
  * (if no threads are ready, does nothing and returns FALSE).
  */
 bool_t protothread_run(protothread_t s) ;
+bool_t protothread_run_locked(protothread_t s) ;
 
 /* Set a function to call when a protothread becomes ready. 
  * This is optional.  The passed function will generally
@@ -137,7 +142,7 @@ typedef struct pt_func_s {
 
 /* This is used to prevent a thread from scheduling again.  This can be
  * very dangerous if the thread in question isn't written to expect this
- * operation.
+ * operation. Returns TRUE if thread successfully found and killed.
  */
 bool_t pt_kill(pt_thread_t * t) ;
 
@@ -173,14 +178,30 @@ void pt_enqueue_wait(pt_thread_t * t, void * channel) ;
 
 #endif
 
+static inline bool_t
+pt_mutex_is_locked(pthread_mutex_t * mu)
+{
+    if (pthread_mutex_trylock(mu)) {
+        /* mutex is already held */
+        return TRUE ;
+    }
+    /* we took the mutex, so now free it */
+    pthread_mutex_unlock(mu) ;
+    return FALSE ;
+}
+
 /* Wait for a channel to be signaled */
-#define pt_wait(env, channel) \
+#define pt_wait(env, channel, mu) \
     do { \
         (env)->pt_func.label = &&PT_LABEL ; \
+        pt_assert(pt_mutex_is_locked(mu)) ; \
+        pthread_mutex_lock(&(env)->pt_func.thread->s->mutex) ; \
+        pthread_mutex_unlock(mu) ; \
         pt_enqueue_wait((env)->pt_func.thread, channel) ; \
         pt_debug_wait(env) ; \
         return PT_WAIT ; \
       PT_LABEL: ; \
+        pthread_mutex_lock(mu) ; \
     } while (0)
 
 /* Let other ready protothreads run, then resume this thread */

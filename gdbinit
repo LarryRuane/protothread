@@ -30,10 +30,6 @@ document ptbt
 end
 
 define ptbtall
-    if ($arg0->running)
-        printf "\nstate: running p *(struct pt_thread_s *)%p\n", $arg0->running
-        ptbt $arg0->running
-    end
     set $pt = $arg0->ready
     while ($pt)
         set $pt = $pt->next

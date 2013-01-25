@@ -31,6 +31,7 @@ void
 protothread_init(state_t const s)
 {
     memset(s, 0, sizeof(*s)) ;
+    pthread_mutex_init(&s->mutex, NULL) ;
 }
 
 void
@@ -42,8 +43,10 @@ protothread_deinit(state_t const s)
             pt_assert(s->wait[i] == NULL) ;
         }
         pt_assert(s->ready == NULL) ;
-        pt_assert(s->running == NULL) ;
+        pt_assert(s->nrunning == 0) ;
+        pt_assert(s->nthread == 0) ;
     }
+    pthread_mutex_destroy(&s->mutex) ;
 }
 
 /* link thread as the newest in the given (ready or wait) list */
@@ -110,32 +113,57 @@ pt_find_and_unlink(pt_thread_t ** const head, pt_thread_t * const n)
 }
 
 bool_t
-protothread_run(state_t const s)
+protothread_run_locked(state_t const s)
 {
-    pt_assert(s->running == NULL) ;
-    if (s->ready == NULL) {
-        return FALSE ;
+    pt_thread_t * run ;
+    pt_t ret ;
+
+    pt_assert(pt_mutex_is_locked(&s->mutex)) ;
+
+    if (s->ready) {
+        /* unlink the oldest ready thread */
+        run = pt_unlink_oldest(&s->ready) ;
+        s->nrunning++ ;
+        pt_assert(s->nrunning > 0) ;
+        pthread_mutex_unlock(&s->mutex) ;
+
+        /* run the thread */
+        ret = run->func(run->env) ;
+        pthread_mutex_lock(&s->mutex) ;
+        pt_assert(s->nrunning > 0) ;
+        s->nrunning-- ;
+        if (ret.pt_rv == PT_RETURN_DONE) {
+            assert(s->nthread) ;
+            s->nthread-- ;
+        }
+    }
+    if (s->nthread == 0 && s->ready_function) {
+        /* no protothreads left; posix thread may want to exit */
+        s->ready_function(s->ready_env) ;
     }
 
-    /* unlink the oldest ready thread */
-    s->running = pt_unlink_oldest(&s->ready) ;
+    /* there are more threads to run (or there are no more threads) */
+    return s->ready != NULL || s->nthread == 0 ;
+}
 
-    /* run the thread */
-    s->running->func(s->running->env) ;
-    s->running = NULL ;
-
-    /* return true if there are more threads to run */
-    return s->ready != NULL ;
+bool_t
+protothread_run(state_t const s)
+{
+    pthread_mutex_lock(&s->mutex) ;
+    bool_t const r = protothread_run_locked(s) ;
+    pthread_mutex_unlock(&s->mutex) ;
+    return r ;
 }
 
 static void
 pt_add_ready(state_t const s, pt_thread_t * const t)
 {
-    if (s->ready_function && !s->ready && !s->running) {
+    pt_assert(pt_mutex_is_locked(&s->mutex)) ;
+    pt_link(&s->ready, t) ;
+    if (s->ready_function) {
         /* this should schedule protothread_run() */
         s->ready_function(s->ready_env) ;
     }
-    pt_link(&s->ready, t) ;
 }
 
 void
@@ -166,7 +194,11 @@ pt_create_thread(
 #endif
 
     /* add the new thread to the ready list */
+    pthread_mutex_lock(&s->mutex) ;
+    s->nthread ++ ;
+    assert(s->nthread) ;
     pt_add_ready(s, t) ;
+    pthread_mutex_unlock(&s->mutex) ;
 }
 
 /* Return which wait list to use (hash table) */
@@ -183,6 +215,7 @@ static void
 pt_wake(state_t const s, void * const channel, bool_t const wake_one)
 {
     pt_thread_t ** const wq = pt_get_wait_list(s, channel) ;
+    pthread_mutex_lock(&s->mutex) ;
     pt_thread_t * prev = *wq ;  /* one before the oldest waiting thread */
 
     while (*wq) {
@@ -204,6 +237,7 @@ pt_wake(state_t const s, void * const channel, bool_t const wake_one)
             }
         }
     }
+    pthread_mutex_unlock(&s->mutex) ;
 }
 
 void
@@ -222,15 +256,18 @@ bool_t
 pt_kill(pt_thread_t * const t)
 {
     state_t const s = t->s ;
-    pt_assert(s->running != t) ;
 
+    pthread_mutex_lock(&s->mutex) ;
     if (!pt_find_and_unlink(&s->ready, t)) {
         pt_thread_t ** const wq = pt_get_wait_list(s, t->channel) ;
         if (!pt_find_and_unlink(wq, t)) {
+            pthread_mutex_unlock(&s->mutex) ;
             return FALSE ;
         }
     }
-
+    pt_assert(s->nthread) ;
+    s->nthread -- ;
+    pthread_mutex_unlock(&s->mutex) ;
     return TRUE ;
 }
 
@@ -239,8 +276,11 @@ void
 pt_enqueue_yield(pt_thread_t * const t)
 {
     state_t const s = t->s ;
-    pt_assert(s->running == t) ;
-    pt_add_ready(s, t) ;
+    pthread_mutex_lock(&s->mutex) ;
+    /* the current protothread, at least, should be running */
+    pt_assert(s->nrunning > 0) ;
+    pt_link(&s->ready, t) ;
+    pthread_mutex_unlock(&s->mutex) ;
 }
 
 /* should only be called by the macro pt_wait() */
@@ -249,7 +289,8 @@ pt_enqueue_wait(pt_thread_t * const t, void * const channel)
 {
     state_t const s = t->s ;
     pt_thread_t ** const wq = pt_get_wait_list(s, channel) ;
-    pt_assert(s->running == t) ;
+    pt_assert(s->nrunning > 0) ;
     t->channel = channel ;
     pt_link(wq, t) ;
+    pthread_mutex_unlock(&s->mutex) ;
 }
