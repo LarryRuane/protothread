@@ -1,0 +1,9 @@
+Building the protothread library is simple.  However, it does require
+CMake version 2.8 or greater.  Once you have it installed, the process
+should be just like this:
+
+cmake CMakeLists.txt
+make
+sudo make install
+
+done!
