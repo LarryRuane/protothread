@@ -12,7 +12,8 @@
 #define pt_assert(condition) do { if (PT_DEBUG) assert(condition) ; } while (0)
 
 /* standard definitions */
-typedef enum bool_e { FALSE, TRUE } bool_t ;
+#include <stdbool.h>
+typedef bool bool_t ;
 typedef void * env_t ;
 
 /* Number of wait queues (size of wait hash table), power of 2 */
