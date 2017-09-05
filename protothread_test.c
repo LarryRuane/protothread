@@ -209,7 +209,7 @@ broadcast_thr(env_t const env)
     broadcast_global_context_t * const gc = c->gc ;
     pt_resume(c) ;
 
-    while (TRUE) {
+    while (true) {
         /* the /3 ensures multiple threads wait on the same chan */
         c->chan = &gc->c[(random() % N)/3] ;
         pt_wait(c, c->chan) ;
@@ -217,7 +217,7 @@ broadcast_thr(env_t const env)
 	    break ;
 	}
 	assert(c->run) ;
-	c->run = FALSE ;
+	c->run = false ;
     }
     return PT_DONE ;
 }
@@ -247,7 +247,7 @@ test_broadcast(void)
         for (j = 0; j < N; j++) {
             if (gc.c[j].chan == chan) {
 		/* should run */
-		gc.c[j].run = TRUE ;
+		gc.c[j].run = true ;
 	    }
 	}
         while (protothread_run(pt)) ;
@@ -257,7 +257,7 @@ test_broadcast(void)
             assert(!gc.c[j].run) ;
         } 
     }
-    gc.done = TRUE ;
+    gc.done = true ;
     for (j = 0; j < N; j++) {
         pt_broadcast(pt, &gc.c[j]) ;
     }
@@ -424,7 +424,7 @@ recursive_thr(env_t const env)
         /* leaf */
         assert(c->value < NODES) ;
         assert(!gc->seen[c->value]) ;
-        gc->seen[c->value] = TRUE ;
+        gc->seen[c->value] = true ;
         pt_wait(c, &gc[rand() % CHANS]) ;
         gc->nseen ++ ;
         free(c) ;
@@ -712,7 +712,7 @@ func_pointer_level2(env_t const env)
     struct level2_s * const c = env ;
     pt_resume(c) ;
     pt_yield(c) ;
-    c->ran = TRUE ;
+    c->ran = true ;
     return PT_DONE ;
 }
 
@@ -736,7 +736,7 @@ test_func_pointer(void)
     pt_f_t const func_ptr = func_pointer_thr ;
 
     /* pt_create() can take a function pointer */
-    c.level2.ran = FALSE ;
+    c.level2.ran = false ;
     pt_create(pt, &c.pt_thread, func_ptr, &c) ;
     protothread_run(pt) ;
     assert(!c.level2.ran) ;
@@ -754,7 +754,7 @@ set_ready(env_t env)
 {
     assert(env == &ready) ;
     assert(!ready) ;
-    ready = TRUE ;
+    ready = true ;
 }
 
 typedef struct ready_context_s {
@@ -789,7 +789,7 @@ test_ready(void)
 
     pt_create(pt, &c->pt_thread, ready_thr, c) ;
     assert(ready) ;
-    ready = FALSE ;
+    ready = false ;
 
     /* advance thread to the wait */
     more = protothread_run(pt) ;
@@ -799,7 +799,7 @@ test_ready(void)
     /* make the thread runnable */
     pt_signal(pt, c) ;
     assert(ready) ;
-    ready = FALSE ;
+    ready = false ;
 
     /* should advance the thread to the pt_yield() */
     more = protothread_run(pt) ;

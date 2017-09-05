@@ -102,11 +102,11 @@ pt_find_and_unlink(pt_thread_t ** const head, pt_thread_t * const n)
             }
         } else {
             pt_unlink(head, prev) ;
-            return TRUE ;
+            return true ;
         }
     }
 
-    return FALSE ;
+    return false ;
 }
 
 bool_t
@@ -114,7 +114,7 @@ protothread_run(state_t const s)
 {
     pt_assert(s->running == NULL) ;
     if (s->ready == NULL) {
-        return FALSE ;
+        return false ;
     }
 
     /* unlink the oldest ready thread */
@@ -209,13 +209,13 @@ pt_wake(state_t const s, void * const channel, bool_t const wake_one)
 void
 pt_signal(state_t const s, void * const channel)
 {
-    pt_wake(s, channel, TRUE) ;
+    pt_wake(s, channel, true) ;
 }
 
 void
 pt_broadcast(state_t const s, void * const channel)
 {
-    pt_wake(s, channel, FALSE) ;
+    pt_wake(s, channel, false) ;
 }
 
 bool_t
@@ -227,11 +227,11 @@ pt_kill(pt_thread_t * const t)
     if (!pt_find_and_unlink(&s->ready, t)) {
         pt_thread_t ** const wq = pt_get_wait_list(s, t->channel) ;
         if (!pt_find_and_unlink(wq, t)) {
-            return FALSE ;
+            return false ;
         }
     }
 
-    return TRUE ;
+    return true ;
 }
 
 /* should only be called by the macro pt_yield() */
