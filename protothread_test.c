@@ -213,11 +213,11 @@ broadcast_thr(env_t const env)
         /* the /3 ensures multiple threads wait on the same chan */
         c->chan = &gc->c[(random() % N)/3] ;
         pt_wait(c, c->chan) ;
-	if (gc->done) {
-	    break ;
-	}
-	assert(c->run) ;
-	c->run = false ;
+        if (gc->done) {
+            break ;
+        }
+        assert(c->run) ;
+        c->run = false ;
     }
     return PT_DONE ;
 }
@@ -246,13 +246,13 @@ test_broadcast(void)
         pt_broadcast(pt, chan) ;
         for (j = 0; j < N; j++) {
             if (gc.c[j].chan == chan) {
-		/* should run */
-		gc.c[j].run = true ;
-	    }
-	}
+                /* should run */
+                gc.c[j].run = true ;
+            }
+        }
         while (protothread_run(pt)) ;
 
-	/* make sure every tread that should have run did run */
+        /* make sure every tread that should have run did run */
         for (j = 0; j < N; j++) {
             assert(!gc.c[j].run) ;
         } 
@@ -963,7 +963,7 @@ test_reset(void)
 /******************************************************************************/
 
 int
-main(int argc, char **argv)
+main()
 {
     test_create_dynamic() ;
     test_create_static() ;
