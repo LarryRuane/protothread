@@ -25,13 +25,23 @@ typedef void * env_t ;
  */
 typedef struct pt_thread_s pt_thread_t ;
 typedef struct protothread_s {
-    void (*ready_function)(env_t) ; /* function to call when a thread becomes ready */
-    env_t ready_env ;               /* environment to pass to ready_function() */
     unsigned int nrunning ;         /* number of current running protothreads */
     unsigned int nthread ;          /* total number of protothreads */
+    unsigned int nresume ;          /* number of protothread resumes */
+
+    /* posix pthreads */
+    unsigned int npthread_max ;     /* max number of pthreads we will create */
+    unsigned int npthread ;         /* total number of posix pthreads */
+    unsigned int npthread_running ; /* number of pthreads running protothreads */
+    pthread_t *tid ;                /* posix pthread ids (array npthread_max) */
+    pthread_cond_t cond ;
+
     pt_thread_t *ready ;            /* ready to run list (points to newest) */
     pt_thread_t *wait[PT_NWAIT] ;   /* waiting for an event (points to newest) */
     pthread_mutex_t mutex ;
+
+    bool_t quiescing ;
+    bool_t closing ;
 } *protothread_t ;
 
 /* Dynamic creation of the protothread system:
@@ -44,6 +54,7 @@ typedef struct protothread_s {
  * allocated by protothread_create().
  */
 protothread_t protothread_create(void) ;
+protothread_t protothread_create_maxpt(unsigned int maxpt) ;
 void protothread_free(protothread_t protothread) ;
 
 /* Static creation of the protothread system:
@@ -55,23 +66,10 @@ void protothread_free(protothread_t protothread) ;
  * protothread_deinit() should be called to
  * safely deinitialize the protothread system.
  */
-void protothread_init(protothread_t protothread) ;
-void protothread_deinit(protothread_t protothread) ;
-
-/* Run a waiting protothread and return TRUE
- * (if no threads are ready, does nothing and returns FALSE).
- */
-bool_t protothread_run(protothread_t s) ;
-bool_t protothread_run_locked(protothread_t s) ;
-
-/* Set a function to call when a protothread becomes ready. 
- * This is optional.  The passed function will generally
- * schedule a function that will call prothread_run() repeatedly
- * until it returns FALSE (or, if it limits the number of calls
- * and the last call to protothread_run() returned TRUE, it
- * must reschedule itself).
- */
-void protothread_set_ready_function(protothread_t s, void (*)(env_t), env_t) ;
+void protothread_init(protothread_t) ;
+void protothread_init_maxpt(protothread_t, int maxpt) ;
+void protothread_deinit(protothread_t) ;
+void protothread_quiesce(protothread_t) ;
 
 /* Function return values; hide things a bit so user can't
  * accidentally return a NULL or an integer.
@@ -135,16 +133,8 @@ typedef struct pt_func_s {
 } pt_func_t ;
 
 /* This should be at the beginning of every protothread function */
-#define pt_resume(c) do { if ((c)->pt_func.label) goto *(c)->pt_func.label ; } while (0)
-
-/* This can be used to reset a thread or thread function */
-#define pt_reset(c) do { (c)->pt_func.label = NULL ; } while (0)
-
-/* This is used to prevent a thread from scheduling again.  This can be
- * very dangerous if the thread in question isn't written to expect this
- * operation. Returns TRUE if thread successfully found and killed.
- */
-bool_t pt_kill(pt_thread_t * t) ;
+#define pt_resume(c) \
+    do { if ((c)->pt_func.label) goto *(c)->pt_func.label ; } while (0)
 
 /* These should only be called by the following pt macros */
 void pt_enqueue_yield(pt_thread_t * t) ;
@@ -156,9 +146,9 @@ void pt_enqueue_wait(pt_thread_t * t, void * channel) ;
 #define PT_LABEL PT_LABEL_HELP(__LINE__)
 
 #if !PT_DEBUG
-#define pt_debug_save(env)
-#define pt_debug_wait(env)
-#define pt_debug_call(env, child_env)
+#define pt_debug_save(env) do { /*nop*/ } while (0)
+#define pt_debug_wait(env) do { /*nop*/ } while (0)
+#define pt_debug_call(env, child_env) do { /*nop*/ } while (0)
 #else
 #define pt_debug_save(env) do { \
     (env)->pt_func.file = __FILE__ ; \
