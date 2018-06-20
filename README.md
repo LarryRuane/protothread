@@ -1,5 +1,7 @@
 ## Introduction ##
 
+_Note_: The multicore branch of this project has been moved to a separate repository: [Protothread-multicore](https://github.com/LarryRuane/protothread-multicore).
+
 [Protothreads](http://en.wikipedia.org/wiki/Protothreads) is a programming model invented by Adam Dunkels that combines the advantages of _event-driven_ (sometimes also called _state machine_) programming and _threaded_ programming. The main advantage of the event-driven model is efficiency, both speed and memory usage.  The main advantage of the threaded model is [algorithm clarity](http://dunkels.com/adam/dunkels06protothreads.pdf).  Protothreads gives you both. A protothread is an extremely lightweight thread. As with event-driven programming, there is a single stack; but like threaded programming, a function can (at least conceptually) block. This protothreads implementation:
   * is not an implementation of POSIX threads or any other standard API
   * does not require assembly-language code or use setjmp/longjmp
