@@ -15,6 +15,7 @@ This project includes:
   * two synchronization facilities built on top of the base protothreads (semaphores and locks)
   * about 800 lines of test code
   * gdb (debugger) macros to print the stack traces of a given protothread or all protothreads.
+  * a cmake find script (FindPROTOTHREAD.cmake)
 
 The original project (in branch `master`) does not support multiple cores (CPUs). More recently, I wrote a version that supports multiple cores, using the single-core version as a starting point (so it is very similar). This version is in branch `multicore`. It is documented in the final section below; from here until that section, this document describes the single-core version.
 
