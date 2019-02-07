@@ -17,8 +17,6 @@ This project includes:
   * gdb (debugger) macros to print the stack traces of a given protothread or all protothreads.
   * a cmake find script (FindPROTOTHREAD.cmake)
 
-The original project (in branch `master`) does not support multiple cores (CPUs). More recently, I wrote a version that supports multiple cores, using the single-core version as a starting point (so it is very similar). This version is in branch `multicore`. It is documented in the final section below; from here until that section, this document describes the single-core version.
-
 ## Threads without stacks ##
 
 The key concept of any protothreads implementation is that when a function wants to wait for an event to occur (that is, suspend itself and let other threads run), it saves its current location within the function (conceptually its line number or program counter), and returns back to the scheduler or idle loop, releasing use of the stack.  The scheduler runs a different thread, handles interrupts or waits for an external event to occur. When the event occurs, the scheduler calls the function in the usual way, and the first thing the function does is `goto` the previously saved location. This location might be within levels of nested loops and `if` statements.
@@ -243,18 +241,6 @@ These are macros (designed to look and act like function calls) whose first argu
 > The given `ready_function` generally schedules (using whatever method is available on your system) another function that calls `protothread_run()` repeatedly until there are no more threads to run (`protothread_run()` returns FALSE).  The `ready_function` should not call `protothread_run()` directly.
 
 > To prevent a sequence of protothread executions from holding onto the CPU for too long, the function can limit the number of times it calls `protothread_run()`; for example it may run no more than 20 threads before returning to the main scheduler to let other things (outside of protothreads) run.  But if it does so (if the last call to `protothread_run()` returns TRUE), it should reschedule itself because there is still work to do.
-
-## Support for multiple cores ##
-
-The multi-core version of this library (source code is in `branches/multicore`) allows multiple processors to run protothreads concurrently, thus taking advantage of those hardware resources. The basic idea is to have each CPU run a single (shared) instance of the protothread scheduler object; that is, call `protothread_run()`. Exactly how this is done depends on your programming environment and is beyond the scope of this library. But a typical way is to start as many POSIX pthreads as there are CPUs, and have each pthread repeatedly call `protothread_run()`.
-
-The only difference in the API compared with the single-core version is that `pt_wait()` gains a mutex argument. This mutex argument is a pointer to a `pthread_mutex_t` variable from the POSIX pthread library. This additional argument is required to solve the "missed signal" timing-window problem: Without this mutex, a protothread might test a condition, decides it needs to wait, but before calling `pt_wait()`, another CPU signals the channel (using `pt_signal()` or `pt_broadcast()`). Since the protothread is not waiting on the channel yet, the signal has no effect, and the protothread then waits, possibly forever.
-
-The use of a mutex (which is allocated by the application) solves the problem; the application locks the mutex, checks the condition, and, upon deciding to wait, passes the address of the mutex to `pt_wait()`, which puts the protothread completely and safely into the waiting state and _then_ releases the mutex. As long as the code that is signaling the channel holds the mutex sometime between changing the condition that the protothread waits for and signaling the channel, the signal cannot be missed.
-
-This is a standard technique that has long been used by POSIX threaded applications (see the POSIX documentation for `pthread_cond_wait()`, which also takes a pthread\_mutex\_t argument).
-
-Please see `branches/multicore/protothread_test.c` for working examples of using this version of the library.
 
 ## References and Acknowledgements ##
 
