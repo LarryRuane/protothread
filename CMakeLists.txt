@@ -1,11 +1,14 @@
 cmake_minimum_required(VERSION 2.8)
 
+set(CMAKE_C_COMPILER "gcc")
+set(CMAKE_CXX_COMPILER "g++")
+
 project(protothread)
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -fPIC")
 set(PROJECT_DESCRIPTION "A protothread library written in C.")
 
-if (("${CMAKE_C_COMPILER_ID}" STREQUAL "Clang") OR (("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU") AND (CMAKE_C_COMPILER_VERSION VERSION_GREATER 4.0)))
+if (("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU") AND (CMAKE_C_COMPILER_VERSION VERSION_GREATER 4.0))
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wextra")
 endif()
 
