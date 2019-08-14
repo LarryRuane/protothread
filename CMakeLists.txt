@@ -1,9 +1,8 @@
 cmake_minimum_required(VERSION 2.8)
 
 set(CMAKE_C_COMPILER "gcc")
-set(CMAKE_CXX_COMPILER "g++")
 
-project(protothread)
+project(protothread C)
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -fPIC")
 set(PROJECT_DESCRIPTION "A protothread library written in C.")
