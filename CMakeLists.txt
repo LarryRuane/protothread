@@ -15,13 +15,11 @@ endif()
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--no-as-needed")
 
 add_library(protothread-static STATIC
-    protothread.c
     protothread_sem.c
     protothread_lock.c
     )
 
 add_library(protothread.o OBJECT
-    protothread.c
     protothread_sem.c
     protothread_lock.c
     )
@@ -31,7 +29,6 @@ add_library(protothread-shared SHARED
     )
 
 add_executable(pttest
-    protothread.c
     protothread_sem.c
     protothread_lock.c
     protothread_test.c
