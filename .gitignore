@@ -1,0 +1,8 @@
+CMakeCache.txt
+CMakeFiles/
+Makefile
+cmake_install.cmake
+libprotothread.*
+protothread.pc
+pttest
+install_manifest.txt
