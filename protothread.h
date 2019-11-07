@@ -293,7 +293,6 @@ pt_enqueue_wait(pt_thread_t * const t, void * const channel)
 /* Did the most recent pt_call() block (break context)? */
 #define pt_call_waited(env) ((env)->pt_func.label != NULL)
 
-static void pt_create_thread(protothread_t, pt_thread_t *, pt_func_t *, pt_f_t, env_t) ;
 #define pt_create(pt, thr, func, env) \
     pt_create_thread(pt, thr, &(env)->pt_func, func, env) ;
 
