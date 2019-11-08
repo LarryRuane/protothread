@@ -47,6 +47,7 @@ struct pt_thread_s {
     env_t env ;                         /* top level function's context */
     void *channel ;                     /* if waiting (never dereferenced) */
     struct protothread_s * s ;          /* pointer to state */
+    int (*atexit)(void * env) ;         /* optional user defined destructor */
 #if PT_DEBUG
     struct pt_func_s * pt_func ;        /* top-level function's pt_func_t */
 #endif
@@ -200,6 +201,9 @@ pt_create_thread(
     /* add the new thread to the ready list */
     pt_add_ready(s, t) ;
 }
+
+/* sets a user defined callback for finalization at the end of pt_kill() */
+#define pt_atexit(pt, func)       pt->atexit = func
 
 /* should only be called by the macro pt_yield() */
 static inline void
@@ -428,6 +432,11 @@ pt_kill(pt_thread_t * const t)
         pt_thread_t ** const wq = pt_get_wait_list(s, t->channel) ;
         if (!pt_find_and_unlink(wq, t)) {
             return false ;
+        }
+        else {
+            if (t->atexit) {
+                t->atexit(t->env) ;
+            }
         }
     }
 
