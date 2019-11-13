@@ -820,6 +820,7 @@ test_ready(void)
 typedef struct kill_context_s {
     pt_thread_t pt_thread ;
     pt_func_t pt_func ;
+    bool atexit_ran ;
 } kill_context_t ;
 
 static pt_t
@@ -831,11 +832,18 @@ kill_thr(env_t const env)
     pt_yield(c) ;
     pt_wait(c, c) ;
 
-    while (1) {
+    while (true) {
         pt_yield(c) ;
     }
 
     return PT_DONE ;
+}
+
+static void
+atexit_fn(env_t const env)
+{
+    kill_context_t * const c = env ;
+    c->atexit_ran = true ;
 }
 
 static void
@@ -845,13 +853,15 @@ test_kill(void)
     kill_context_t * const c = calloc(2, sizeof(*c)) ;
     bool_t more ;
 
-    /* Create the thread, kill it while it is in the run queue and make
+    /* Create the thread, kill it while it is in the ready queue and make
      * sure it didn't run.
      */
     pt_create(pt, &c[0].pt_thread, kill_thr, &c[0]) ;
-    pt_kill(&c[0].pt_thread) ;
+    assert(pt_kill(&c[0].pt_thread)) ;
     more = protothread_run(pt) ;
     assert(!more) ;
+    assert(pt->ready == NULL) ;
+    assert(!c[0].atexit_ran) ;
 
     /* Try to kill it one more time, just for giggles.  This may not cause any
      * apparent problems, but memory-checker tools like valgrind will flag
@@ -862,7 +872,7 @@ test_kill(void)
     /* Create the thread, wait until it is in the wait queue, wake it,
      * kill it and make sure it isn't scheduled any longer.
      *
-     * This actually tests killing while in the run queue (thus the same
+     * This actually tests killing while in the ready queue (thus the same
      * test as above), but helps justify the following test.
      */
     pt_create(pt, &c[0].pt_thread, kill_thr, &c[0]) ;
@@ -906,6 +916,14 @@ test_kill(void)
     assert(pt_kill(&c[0].pt_thread)) ;
     more = protothread_run(pt) ;
     assert(!more) ;
+
+    /* Verify atexit behavior
+     */
+    pt_create(pt, &c[0].pt_thread, kill_thr, &c[0]) ;
+    pt_set_atexit(&c[0].pt_thread, atexit_fn) ;
+    assert(!c[0].atexit_ran) ;
+    assert(pt_kill(&c[0].pt_thread)) ;
+    assert(c[0].atexit_ran) ;
 
     free(c) ;
     protothread_free(pt) ;

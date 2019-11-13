@@ -47,7 +47,7 @@ struct pt_thread_s {
     env_t env ;                         /* top level function's context */
     void *channel ;                     /* if waiting (never dereferenced) */
     struct protothread_s * s ;          /* pointer to state */
-    void (*atexit)(void * env) ;        /* optional user defined destructor */
+    void (*atexit)(env_t env) ;         /* optional user defined destructor */
 #if PT_DEBUG
     struct pt_func_s * pt_func ;        /* top-level function's pt_func_t */
 #endif
@@ -152,19 +152,17 @@ pt_find_and_unlink(pt_thread_t ** const head, pt_thread_t * const n)
 
     while (*head) {
         pt_thread_t * const t = prev->next ;
-        if (n != t) {
-            /* Advance to next thread */
-            prev = t ;
-            /* looped back to start? finished */
-            if (prev == *head) {
-                break ;
-            }
-        } else {
+        if (n == t) {
             pt_unlink(head, prev) ;
             return true ;
         }
+        /* Advance to next thread */
+        prev = t ;
+        /* looped back to start? finished */
+        if (prev == *head) {
+            break ;
+        }
     }
-
     return false ;
 }
 
@@ -203,7 +201,10 @@ pt_create_thread(
 }
 
 /* sets a user defined callback for finalization at the end of pt_kill() */
-#define pt_atexit(pt, func)       pt->atexit = func
+static inline void
+pt_set_atexit(pt_thread_t * pt, void (*func)(env_t)) {
+    pt->atexit = func ;
+}
 
 /* should only be called by the macro pt_yield() */
 static inline void
@@ -431,13 +432,12 @@ pt_kill(pt_thread_t * const t)
     if (!pt_find_and_unlink(&s->ready, t)) {
         pt_thread_t ** const wq = pt_get_wait_list(s, t->channel) ;
         if (!pt_find_and_unlink(wq, t)) {
-            if (t->atexit) {
-                t->atexit(t->env) ;
-            }
             return false ;
         }
     }
-
+    if (t->atexit) {
+        t->atexit(t->env) ;
+    }
     return true ;
 }
 #endif
