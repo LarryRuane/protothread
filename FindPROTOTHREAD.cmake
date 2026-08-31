@@ -1,13 +1,16 @@
-# - try to find VIPER library
+# SPDX-License-Identifier: BSL-1.0
+# NOTE: third-party file, licensed separately from the rest of this
+# project (which is MIT).  See the Boost notice below.
+# - try to find the protothread headers
+#
+# Protothread is header-only, so there is no library to find or link.
 #
 # Cache Variables: (probably not for direct use in your scripts)
-#  VIPER_INCLUDE_DIR
-#  VIPER_LIBRARY
+#  PROTOTHREAD_INCLUDE_DIR
 #
 # Non-cache variables you might use in your CMakeLists.txt:
-#  VIPER_FOUND
-#  VIPER_INCLUDE_DIRS
-#  VIPER_LIBRARIES
+#  PROTOTHREAD_FOUND
+#  PROTOTHREAD_INCLUDE_DIRS
 #
 # Requires these CMake modules:
 #  FindPackageHandleStandardArgs (known included with CMake >=2.6.2)
@@ -23,21 +26,15 @@
 # (See accompanying file LICENSE_1_0.txt or copy at
 # http://www.boost.org/LICENSE_1_0.txt)
 
-find_library(PROTOTHREAD_LIBRARY
-    NAMES protothread)
-
 find_path(PROTOTHREAD_INCLUDE_DIR
     NAMES protothread.h)
 
 include(FindPackageHandleStandardArgs)
 find_package_handle_standard_args(PROTOTHREAD
     DEFAULT_MSG
-    PROTOTHREAD_LIBRARY
     PROTOTHREAD_INCLUDE_DIR)
 
 if(PROTOTHREAD_FOUND)
-    set(PROTOTHREAD_LIBRARIES "${PROTOTHREAD_LIBRARY}")
-
     set(PROTOTHREAD_INCLUDE_DIRS "${PROTOTHREAD_INCLUDE_DIR}")
 endif()
 

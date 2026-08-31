@@ -6,3 +6,5 @@ libprotothread.*
 protothread.pc
 pttest
 install_manifest.txt
+build*/
+.vscode/

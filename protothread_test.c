@@ -1,16 +1,29 @@
 /**************************************************************/
 /* PROTOTHREAD_TEST.C */
-/* Copyright (c) 2008, Larry Ruane, LeftHand Networks Inc. */
-/* See license.txt */
+/* https://github.com/LarryRuane/protothread */
+/* Copyright (c) 2008-present Larry Ruane */
+/* Distributed under the MIT software license, see the accompanying */
+/* file LICENSE or https://opensource.org/licenses/MIT. */
+/* SPDX-License-Identifier: MIT */
 /**************************************************************/
 #include <stdio.h>
 #include <string.h>
-#include <assert.h>
 #include <stdlib.h>
+
+/* Checks must run even in an NDEBUG build, so do not use assert(): it would
+ * compile the entire test suite away into a program that verifies nothing.
+ */
+#define check(cond) do { \
+    if (!(cond)) { \
+        fprintf(stderr, "%s:%d: check failed: %s\n", __FILE__, __LINE__, #cond) ; \
+        abort() ; \
+    } \
+} while (0)
 
 #include "protothread.h"
 #include "protothread_sem.h"
 #include "protothread_lock.h"
+#include "protothread_timer.h"
 
 /******************************************************************************/
 
@@ -18,7 +31,7 @@ static void
 test_create_dynamic(void)
 {
     protothread_t const pt = protothread_create() ;
-    protothread_run(pt) ;
+    check(!protothread_run(pt)) ;       /* nothing is ready */
     protothread_free(pt) ;
 }
 
@@ -30,7 +43,7 @@ test_create_static(void)
     struct protothread_s static_pt ;
     protothread_t const pt = &static_pt ;
     protothread_init(pt) ;
-    protothread_run(pt) ;
+    check(!protothread_run(pt)) ;       /* nothing is ready */
     protothread_deinit(pt) ;
 }
 
@@ -60,7 +73,7 @@ test_thread_create(void)
 
     for (i = 0; i < 1000; i++) {
         pt_create(pt, &c->pt_thread, create_thr, c) ;
-        protothread_run(pt) ;
+        check(!protothread_run(pt)) ;
     }
     free(c) ;
     protothread_free(pt) ;
@@ -97,12 +110,13 @@ test_yield(void)
     pt_create(pt, &c->pt_thread, yield_thr, c) ;
 
     /* it hasn't run yet at all, make it reach the yield */
-    protothread_run(pt) ;
+    check(protothread_run(pt)) ;        /* it yielded, so it is ready again */
 
     for (i = 0; i < 10; i++) {
         /* make sure the protothread advances its loop */
-        assert(i == c->i) ;
-        protothread_run(pt) ;
+        check(i == c->i) ;
+        /* the last iteration runs it off the end of its loop */
+        check(protothread_run(pt) == (i < 9)) ;
     }
     free(c) ;
     protothread_free(pt) ;
@@ -144,34 +158,34 @@ test_wait(void)
 
     /* threads haven't run yet at all, make them reach the wait */
     for (j = 0; j < 10; j++) {
-        protothread_run(pt) ;
+        check(protothread_run(pt) == (j < 9)) ;
     }
 
     for (i = 0; i < 10; i++) {
         for (j = 0; j < 10; j++) {
-            assert(i == c[j]->i) ;
+            check(i == c[j]->i) ;
         }
 
         /* make threads runnable, but do not actually run the threads */
         pt_broadcast(pt, NULL) ;
         for (j = 0; j < 10; j++) {
-            assert(i == c[j]->i) ;
+            check(i == c[j]->i) ;
         }
 
         /* run each thread once */
         for (j = 0; j < 10; j++) {
-            protothread_run(pt) ;
+            check(protothread_run(pt) == (j < 9)) ;
         }
         for (j = 0; j < 10; j++) {
-            assert(i+1 == c[j]->i) ;
+            check(i+1 == c[j]->i) ;
         }
 
         /* extra steps and wrong signals shouldn't advance the thread */
-        protothread_run(pt) ;
+        check(!protothread_run(pt)) ;
         pt_broadcast(pt, c[0]) ;
-        protothread_run(pt) ;
+        check(!protothread_run(pt)) ; /* nobody waits on that channel */
         for (j = 0; j < 10; j++) {
-            assert(i+1 == c[j]->i) ;
+            check(i+1 == c[j]->i) ;
         }
     }
 
@@ -211,12 +225,12 @@ broadcast_thr(env_t const env)
 
     while (true) {
         /* the /3 ensures multiple threads wait on the same chan */
-        c->chan = &gc->c[(random() % N)/3] ;
+        c->chan = &gc->c[(rand() % N)/3] ;
         pt_wait(c, c->chan) ;
         if (gc->done) {
             break ;
         }
-        assert(c->run) ;
+        check(c->run) ;
         c->run = false ;
     }
     return PT_DONE ;
@@ -238,11 +252,11 @@ test_broadcast(void)
 
     /* threads haven't run yet at all, make them reach the wait */
     for (j = 0; j < N; j++) {
-        protothread_run(pt) ;
+        check(protothread_run(pt) == (j < N-1)) ;
     }
 
     for (i = 0; i < 10000; i++) {
-        broadcast_context_t * const chan = &gc.c[(random() % N)/3] ;
+        broadcast_context_t * const chan = &gc.c[(rand() % N)/3] ;
         pt_broadcast(pt, chan) ;
         for (j = 0; j < N; j++) {
             if (gc.c[j].chan == chan) {
@@ -254,7 +268,7 @@ test_broadcast(void)
 
         /* make sure every tread that should have run did run */
         for (j = 0; j < N; j++) {
-            assert(!gc.c[j].run) ;
+            check(!gc.c[j].run) ;
         } 
     }
     gc.done = true ;
@@ -319,7 +333,7 @@ consumer_thr(env_t const env)
             /* mailbox is empty */
             pt_wait(c, c->mailbox) ;
         }
-        assert(*c->mailbox == c->i) ;
+        check(*c->mailbox == c->i) ;
         *c->mailbox = 0 ;   /* remove the item */
         pt_signal(pt_get_pt(c), c->mailbox) ;
     }
@@ -348,8 +362,8 @@ test_pc(void)
     while (protothread_run(pt)) ;
 
     /* threads have completed */
-    assert(cc->i == N+1) ;
-    assert(pc->i == N+1) ;
+    check(cc->i == N+1) ;
+    check(pc->i == N+1) ;
 
     free(cc) ;
     free(pc) ;
@@ -419,13 +433,13 @@ recursive_thr(env_t const env)
     recursive_call_global_context_t * const gc = c->gc ;
     pt_resume(c) ;
 
-    pt_wait(c, &gc[rand() % CHANS]) ;
+    pt_wait(c, &gc->seen[rand() % CHANS]) ;
     if (c->level >= DEPTH) {
         /* leaf */
-        assert(c->value < NODES) ;
-        assert(!gc->seen[c->value]) ;
+        check(c->value < NODES) ;
+        check(!gc->seen[c->value]) ;
         gc->seen[c->value] = true ;
-        pt_wait(c, &gc[rand() % CHANS]) ;
+        pt_wait(c, &gc->seen[rand() % CHANS]) ;
         gc->nseen ++ ;
         free(c) ;
         return PT_DONE ;
@@ -443,7 +457,7 @@ recursive_thr(env_t const env)
         /* once in a while create a new thread (asynchronous) */
         pt_create(pt_get_pt(c), &c->child_c->pt_thread, recursive_thr, c->child_c) ;
     }
-    pt_wait(c, &gc[rand() % CHANS]) ;
+    pt_wait(c, &gc->seen[rand() % CHANS]) ;
 
     /* create the "right" (1) child; it will free this */
     c->child_c = malloc(sizeof(*c->child_c)) ;
@@ -482,11 +496,11 @@ test_recursive_once(void)
             i++ ;
         }
         /* make sure it is not taking too long (the 10 is cushion) */
-        assert(i < NODES*4*10) ;
-        pt_broadcast(pt, &gc[rand() % CHANS]) ;
+        check(i < NODES*4*10) ;
+        pt_broadcast(pt, &gc->seen[rand() % CHANS]) ;
     }
     for (i = 0; i < NODES; i++) {
-        assert(gc->seen[i]) ;
+        check(gc->seen[i]) ;
     }
     free(gc) ;
     protothread_free(pt) ;
@@ -531,10 +545,10 @@ sem_thr(env_t const env)
     for (c->i = 0; c->i < 100; c->i++) {
         /* enter critical section */
         pt_sem_acquire(c, &c->sem_env, &c->gc->sem_value) ;
-        assert(c->gc->owner == 0) ;
+        check(c->gc->owner == 0) ;
         c->gc->owner = c->id ;
         pt_yield(c) ;
-        assert(c->gc->owner == c->id) ;
+        check(c->gc->owner == c->id) ;
         c->gc->owner = 0 ;
         pt_sem_release(&c->sem_env, &c->gc->sem_value) ;
         pt_yield(c) ;
@@ -615,16 +629,16 @@ read_thr(env_t const env)
         /* enter critical section */
         pt_lock_acquire_read(c, &c->lock_env, &c->gc->lock) ;
         lock_trc("rs", c->id) ;
-        for (c->yi = random() % 100; c->yi; c->yi--) {
-            assert(c->gc->lock.nwriters == 0) ;
-            assert(c->gc->lock.nreaders > 0) ;
+        for (c->yi = rand() % 100; c->yi; c->yi--) {
+            check(c->gc->lock.nwriters == 0) ;
+            check(c->gc->lock.nreaders > 0) ;
             pt_yield(c) ;
-            assert(c->gc->lock.nwriters == 0) ;
-            assert(c->gc->lock.nreaders > 0) ;
+            check(c->gc->lock.nwriters == 0) ;
+            check(c->gc->lock.nreaders > 0) ;
         }
         lock_trc("re", c->id) ;
         pt_lock_release_read(&c->lock_env, &c->gc->lock) ;
-        for (c->yi = random() % 200; c->yi; c->yi--) {
+        for (c->yi = rand() % 200; c->yi; c->yi--) {
             pt_yield(c) ;
         }
     }
@@ -643,11 +657,11 @@ write_thr(env_t const env)
         pt_lock_acquire_write(c, &c->lock_env, &c->gc->lock) ;
         lock_trc("ws", c->id) ;
         for (c->yi = rand() % 100; c->yi; c->yi--) {
-            assert(c->gc->lock.nreaders == 0) ;
-            assert(c->gc->lock.nwriters == 1) ;
+            check(c->gc->lock.nreaders == 0) ;
+            check(c->gc->lock.nwriters == 1) ;
             pt_yield(c) ;
-            assert(c->gc->lock.nreaders == 0) ;
-            assert(c->gc->lock.nwriters == 1) ;
+            check(c->gc->lock.nreaders == 0) ;
+            check(c->gc->lock.nwriters == 1) ;
         }
         lock_trc("we", c->id) ;
         pt_lock_release_write(&c->lock_env, &c->gc->lock) ;
@@ -688,7 +702,7 @@ test_lock(void)
     /* as long as there is work to do */
     while (protothread_run(pt)) ;
 
-    assert(lock_gc.nthreads == 0) ;
+    check(lock_gc.nthreads == 0) ;
     protothread_free(pt) ;
 }
 
@@ -738,10 +752,10 @@ test_func_pointer(void)
     /* pt_create() can take a function pointer */
     c.level2.ran = false ;
     pt_create(pt, &c.pt_thread, func_ptr, &c) ;
-    protothread_run(pt) ;
-    assert(!c.level2.ran) ;
-    protothread_run(pt) ;
-    assert(c.level2.ran) ;
+    check(protothread_run(pt)) ;        /* level 2 yielded */
+    check(!c.level2.ran) ;
+    check(!protothread_run(pt)) ;       /* now it runs off the end */
+    check(c.level2.ran) ;
 
     protothread_free(pt) ;
 }
@@ -752,8 +766,8 @@ static bool_t ready ;
 static void
 set_ready(env_t env)
 {
-    assert(env == &ready) ;
-    assert(!ready) ;
+    check(env == &ready) ;
+    check(!ready) ;
     ready = true ;
 }
 
@@ -784,32 +798,32 @@ test_ready(void)
 
     /* nothing to run */
     more = protothread_run(pt) ;
-    assert(!more) ;
-    assert(!ready) ;
+    check(!more) ;
+    check(!ready) ;
 
     pt_create(pt, &c->pt_thread, ready_thr, c) ;
-    assert(ready) ;
+    check(ready) ;
     ready = false ;
 
     /* advance thread to the wait */
     more = protothread_run(pt) ;
-    assert(!more) ;
-    assert(!ready) ;
+    check(!more) ;
+    check(!ready) ;
 
     /* make the thread runnable */
     pt_signal(pt, c) ;
-    assert(ready) ;
+    check(ready) ;
     ready = false ;
 
     /* should advance the thread to the pt_yield() */
     more = protothread_run(pt) ;
-    assert(more) ;
-    assert(!ready) ;
+    check(more) ;
+    check(!ready) ;
 
     /* advance the thread to its exit, nothing ready to run */
     more = protothread_run(pt) ;
-    assert(!more) ;
-    assert(!ready) ;
+    check(!more) ;
+    check(!ready) ;
 
     free(c) ;
     protothread_free(pt) ;
@@ -857,17 +871,17 @@ test_kill(void)
      * sure it didn't run.
      */
     pt_create(pt, &c[0].pt_thread, kill_thr, &c[0]) ;
-    assert(pt_kill(&c[0].pt_thread)) ;
+    check(pt_kill(&c[0].pt_thread)) ;
     more = protothread_run(pt) ;
-    assert(!more) ;
-    assert(pt->ready == NULL) ;
-    assert(!c[0].atexit_ran) ;
+    check(!more) ;
+    check(pt->ready == NULL) ;
+    check(!c[0].atexit_ran) ;
 
-    /* Try to kill it one more time, just for giggles.  This may not cause any
+    /* Try to kill it one more time, just for giggles. This may not cause any
      * apparent problems, but memory-checker tools like valgrind will flag
      * any problems created here.
      */
-    assert(!pt_kill(&c[0].pt_thread)) ;
+    check(!pt_kill(&c[0].pt_thread)) ;
 
     /* Create the thread, wait until it is in the wait queue, wake it,
      * kill it and make sure it isn't scheduled any longer.
@@ -877,53 +891,53 @@ test_kill(void)
      */
     pt_create(pt, &c[0].pt_thread, kill_thr, &c[0]) ;
     more = protothread_run(pt) ;
-    assert(more) ;
+    check(more) ;
     more = protothread_run(pt) ;
-    assert(!more) ;
+    check(!more) ;
     pt_broadcast(pt, &c[0]) ;
     more = protothread_run(pt) ;
-    assert(more) ;
-    assert(pt_kill(&c[0].pt_thread)) ;
+    check(more) ;
+    check(pt_kill(&c[0].pt_thread)) ;
     more = protothread_run(pt) ;
-    assert(!more) ;
+    check(!more) ;
 
     /* Create the thread, wait until it is in the wait queue, kill it,
      * wake it and make sure it never scheduled again.
      */
     pt_create(pt, &c[0].pt_thread, kill_thr, &c[0]) ;
     more = protothread_run(pt) ;
-    assert(more) ;
+    check(more) ;
     more = protothread_run(pt) ;
-    assert(!more) ;
-    assert(pt_kill(&c[0].pt_thread)) ;
+    check(!more) ;
+    check(pt_kill(&c[0].pt_thread)) ;
     pt_broadcast(pt, &c[0]) ;
     more = protothread_run(pt) ;
-    assert(!more) ;
+    check(!more) ;
 
     /* Create two threads, delete them one way and then
      * delete them the other way.
      */
     pt_create(pt, &c[0].pt_thread, kill_thr, &c[0]) ;
     pt_create(pt, &c[1].pt_thread, kill_thr, &c[1]) ;
-    assert(pt_kill(&c[0].pt_thread)) ;
-    assert(pt_kill(&c[1].pt_thread)) ;
+    check(pt_kill(&c[0].pt_thread)) ;
+    check(pt_kill(&c[1].pt_thread)) ;
     more = protothread_run(pt) ;
-    assert(!more) ;
+    check(!more) ;
 
     pt_create(pt, &c[0].pt_thread, kill_thr, &c[0]) ;
     pt_create(pt, &c[1].pt_thread, kill_thr, &c[1]) ;
-    assert(pt_kill(&c[1].pt_thread)) ;
-    assert(pt_kill(&c[0].pt_thread)) ;
+    check(pt_kill(&c[1].pt_thread)) ;
+    check(pt_kill(&c[0].pt_thread)) ;
     more = protothread_run(pt) ;
-    assert(!more) ;
+    check(!more) ;
 
     /* Verify atexit behavior
      */
     pt_create(pt, &c[0].pt_thread, kill_thr, &c[0]) ;
     pt_set_atexit(&c[0].pt_thread, atexit_fn) ;
-    assert(!c[0].atexit_ran) ;
-    assert(pt_kill(&c[0].pt_thread)) ;
-    assert(c[0].atexit_ran) ;
+    check(!c[0].atexit_ran) ;
+    check(pt_kill(&c[0].pt_thread)) ;
+    check(c[0].atexit_ran) ;
 
     free(c) ;
     protothread_free(pt) ;
@@ -962,20 +976,214 @@ test_reset(void)
      */
     pt_create(pt, &c->pt_thread, reset_thr, c) ;
 
-    protothread_run(pt) ;
-    assert(c->i == 0) ;
+    check(protothread_run(pt)) ;
+    check(c->i == 0) ;
 
-    protothread_run(pt) ;
-    assert(c->i == 1) ;
+    check(protothread_run(pt)) ;
+    check(c->i == 1) ;
     pt_reset(c) ;
 
-    protothread_run(pt) ;
-    assert(c->i == 0) ;
+    check(protothread_run(pt)) ;
+    check(c->i == 0) ;
 
     while (protothread_run(pt)) ;
 
     free(c) ;
     protothread_free(pt) ;
+}
+
+
+/******************************************************************************/
+
+/* Timers */
+
+typedef struct timer_context_s {
+    pt_thread_t pt_thread ;
+    pt_func_t pt_func ;
+    pt_timer_env_t timer_env ;
+    pt_timers_t * timers ;
+    pt_time_t delay ;
+    int * order ;           /* shared: where to record the wake order */
+    int * nwoke ;
+    int id ;
+} timer_context_t ;
+
+static pt_t
+timer_thr(env_t const env)
+{
+    timer_context_t * const c = env ;
+    pt_resume(c) ;
+
+    pt_sleep(c, &c->timer_env, c->timers, c->delay) ;
+    c->order[(*c->nwoke)++] = c->id ;
+    return PT_DONE ;
+}
+
+/* Threads created in one order, with deadlines in another, must wake in
+ * deadline order. <base> exercises clock wraparound.
+ */
+static void
+test_timer_order(pt_time_t base)
+{
+    protothread_t const pt = protothread_create() ;
+    pt_timers_t timers ;
+    timer_context_t c[5] ;
+    /* created in this order, so wake order must be 3,1,4,0,2 */
+    const pt_time_t delay[5] = { 40, 20, 50, 10, 30 } ;
+    int order[5] ;
+    int nwoke = 0 ;
+    int i ;
+    pt_time_t next ;
+
+    pt_timers_init(&timers, base) ;
+    for (i = 0; i < 5; i++) {
+        c[i].timers = &timers ;
+        c[i].delay = delay[i] ;
+        c[i].order = order ;
+        c[i].nwoke = &nwoke ;
+        c[i].id = i ;
+        pt_create(pt, &c[i].pt_thread, timer_thr, &c[i]) ;
+    }
+    /* let every thread reach its pt_sleep() */
+    while (protothread_run(pt)) ;
+    check(nwoke == 0) ;
+
+    /* soonest deadline is reported for the idle loop */
+    check(pt_timer_next(&timers, &next)) ;
+    check(next == (pt_time_t)(base + 10)) ;
+
+    /* advance the clock one tick at a time */
+    for (i = 1; i <= 50; i++) {
+        pt_timer_run(pt, &timers, base + i) ;
+        while (protothread_run(pt)) ;
+    }
+    check(nwoke == 5) ;
+    check(order[0] == 3) ;
+    check(order[1] == 1) ;
+    check(order[2] == 4) ;
+    check(order[3] == 0) ;
+    check(order[4] == 2) ;
+    check(!pt_timer_next(&timers, &next)) ;
+
+    protothread_free(pt) ;
+}
+
+/* A clock jump must wake everything that became due, not just one */
+static void
+test_timer_jump(void)
+{
+    protothread_t const pt = protothread_create() ;
+    pt_timers_t timers ;
+    timer_context_t c[3] ;
+    const pt_time_t delay[3] = { 5, 10, 100 } ;
+    int order[3] ;
+    int nwoke = 0 ;
+    int i ;
+
+    pt_timers_init(&timers, 0) ;
+    for (i = 0; i < 3; i++) {
+        c[i].timers = &timers ;
+        c[i].delay = delay[i] ;
+        c[i].order = order ;
+        c[i].nwoke = &nwoke ;
+        c[i].id = i ;
+        pt_create(pt, &c[i].pt_thread, timer_thr, &c[i]) ;
+    }
+    while (protothread_run(pt)) ;
+
+    /* one call, jumping past two deadlines at once */
+    pt_timer_run(pt, &timers, 50) ;
+    while (protothread_run(pt)) ;
+    check(nwoke == 2) ;
+    check(order[0] == 0) ;
+    check(order[1] == 1) ;
+
+    pt_timer_run(pt, &timers, 200) ;
+    while (protothread_run(pt)) ;
+    check(nwoke == 3) ;
+    check(order[2] == 2) ;
+
+    protothread_free(pt) ;
+}
+
+/* A cancelled sleeper never wakes, and cancelling is idempotent */
+static void
+test_timer_cancel(void)
+{
+    protothread_t const pt = protothread_create() ;
+    pt_timers_t timers ;
+    timer_context_t c[2] ;
+    const pt_time_t delay[2] = { 10, 20 } ;
+    int order[2] ;
+    int nwoke = 0 ;
+    int i ;
+    pt_time_t next ;
+
+    pt_timers_init(&timers, 0) ;
+    for (i = 0; i < 2; i++) {
+        c[i].timers = &timers ;
+        c[i].delay = delay[i] ;
+        c[i].order = order ;
+        c[i].nwoke = &nwoke ;
+        c[i].id = i ;
+        pt_create(pt, &c[i].pt_thread, timer_thr, &c[i]) ;
+    }
+    while (protothread_run(pt)) ;
+
+    /* cancel the first; the list head must become the second */
+    check(pt_timer_cancel(&timers, &c[0].timer_env)) ;
+    check(!pt_timer_cancel(&timers, &c[0].timer_env)) ;
+    check(pt_timer_next(&timers, &next)) ;
+    check(next == 20) ;
+
+    pt_timer_run(pt, &timers, 100) ;
+    while (protothread_run(pt)) ;
+    check(nwoke == 1) ;
+    check(order[0] == 1) ;
+
+    /* c[0] is still blocked, so kill it before tearing down */
+    check(pt_kill(&c[0].pt_thread)) ;
+    protothread_free(pt) ;
+}
+
+static void
+test_timer(void)
+{
+    /* ordinary clock, then one that wraps mid-test */
+    test_timer_order(0) ;
+    test_timer_order(1000) ;
+    test_timer_order((pt_time_t)-25) ;
+    test_timer_order((pt_time_t)-1) ;
+    test_timer_jump() ;
+    test_timer_cancel() ;
+
+    /* the wraparound-safe comparison itself */
+    check(pt_time_after(10, 5)) ;
+    check(!pt_time_after(5, 10)) ;
+    check(!pt_time_after(5, 5)) ;
+    check(pt_time_after(5, (pt_time_t)-5)) ;        /* 5 is after -5 across the wrap */
+    check(!pt_time_after((pt_time_t)-5, 5)) ;
+}
+
+
+/******************************************************************************/
+
+static void
+test_version(void)
+{
+    char buf[32] ;
+
+    /* the string is derived from the numbers, so it cannot drift */
+    snprintf(buf, sizeof(buf), "%d.%d.%d",
+             PT_VERSION_MAJOR, PT_VERSION_MINOR, PT_VERSION_PATCH) ;
+    check(strcmp(buf, PT_VERSION_STRING) == 0) ;
+
+    check(PT_VERSION_NUMBER ==
+          PT_VERSION_MAJOR * 10000 + PT_VERSION_MINOR * 100 + PT_VERSION_PATCH) ;
+
+    check(PT_VERSION_AT_LEAST(0, 0, 0)) ;
+    check(PT_VERSION_AT_LEAST(PT_VERSION_MAJOR, PT_VERSION_MINOR, PT_VERSION_PATCH)) ;
+    check(!PT_VERSION_AT_LEAST(PT_VERSION_MAJOR + 1, 0, 0)) ;
 }
 
 /******************************************************************************/
@@ -998,6 +1206,8 @@ main()
     test_ready() ;
     test_kill() ;
     test_reset() ;
+    test_timer() ;
+    test_version() ;
 
     return 0 ;
 }

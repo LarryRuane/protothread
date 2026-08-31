@@ -1,9 +1,12 @@
-Name: ${PROJECT_NAME}
-Description: ${PROJECT_DESCRIPTION}
-Version: ${PROJECT_VERSION}
-Requires: ${PKG_CONFIG_REQUIRES}
-prefix=${CMAKE_INSTALL_PREFIX}
-includedir=${PKG_CONFIG_INCLUDEDIR}
-libdir=${PKG_CONFIG_LIBDIR}
-Libs: ${PKG_CONFIG_LIBS}
-Cflags: ${PKG_CONFIG_CFLAGS}
+# https://github.com/LarryRuane/protothread
+# Copyright (c) 2008-present Larry Ruane
+# Distributed under the MIT software license, see the accompanying
+# file LICENSE or https://opensource.org/licenses/MIT.
+# SPDX-License-Identifier: MIT
+prefix=@CMAKE_INSTALL_PREFIX@
+includedir=${prefix}/include
+
+Name: @PROJECT_NAME@
+Description: @PROJECT_DESCRIPTION@
+Version: @PROJECT_VERSION@
+Cflags: -I${includedir}
