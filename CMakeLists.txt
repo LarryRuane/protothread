@@ -1,8 +1,22 @@
-cmake_minimum_required(VERSION 2.8)
+# https://github.com/LarryRuane/protothread
+# Copyright (c) 2008-present Larry Ruane
+# Distributed under the MIT software license, see the accompanying
+# file LICENSE or https://opensource.org/licenses/MIT.
+# SPDX-License-Identifier: MIT
+cmake_minimum_required(VERSION 3.10...3.31)
 
 set(CMAKE_C_COMPILER "gcc")
 
-project(protothread C)
+# the version lives in protothread.h; read it so the two cannot drift
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/protothread.h" _pt_header)
+foreach(_part MAJOR MINOR PATCH)
+    string(REGEX MATCH "#define PT_VERSION_${_part} +([0-9]+)" _ "${_pt_header}")
+    set(_pt_${_part} ${CMAKE_MATCH_1})
+endforeach()
+unset(_pt_header)
+
+project(protothread VERSION ${_pt_MAJOR}.${_pt_MINOR}.${_pt_PATCH} LANGUAGES C)
+message(STATUS "protothread version ${PROJECT_VERSION}")
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -fPIC")
 set(PROJECT_DESCRIPTION "A protothread library written in C.")
@@ -11,48 +25,52 @@ if (("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU") AND (CMAKE_C_COMPILER_VERSION VERS
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wextra")
 endif()
 
-# the following is until we learn how to reorder the gcc arguments to correctly link on Ubuntu
-set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--no-as-needed")
-
-add_library(protothread-static STATIC
-    protothread_sem.c
-    protothread_lock.c
-    )
-
-add_library(protothread.o OBJECT
-    protothread_sem.c
-    protothread_lock.c
-    )
-
-add_library(protothread-shared SHARED
-    $<TARGET_OBJECTS:protothread.o>
-    )
+# Protothread is header-only: there is nothing to compile or link against,
+# just headers to include. PT_DEBUG changes the layout of pt_thread_t and
+# pt_func_t, so a prebuilt library could silently disagree with the
+# application that includes these headers; header-only makes that impossible.
+add_library(protothread INTERFACE)
+target_include_directories(protothread INTERFACE
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+    $<INSTALL_INTERFACE:include>)
 
 add_executable(pttest
-    protothread_sem.c
-    protothread_lock.c
     protothread_test.c
     )
+target_link_libraries(pttest PRIVATE protothread)
 
-# CMake doesn't allow targets with the same name.  This renames them properly afterward.
-SET_TARGET_PROPERTIES(protothread-static PROPERTIES OUTPUT_NAME protothread CLEAN_DIRECT_OUTPUT 1)
-SET_TARGET_PROPERTIES(protothread-shared PROPERTIES OUTPUT_NAME protothread CLEAN_DIRECT_OUTPUT 1)
+# The benchmark compares against POSIX threads, so unlike the library it
+# needs pthreads and clock_gettime. Off by default: it must not be a
+# dependency of an ordinary build, least of all a cross-compiled one.
+#   cmake -S . -B build -DPROTOTHREAD_BENCH=ON && ./build/ptbench
+option(PROTOTHREAD_BENCH "Build the pthread comparison benchmark" OFF)
+if(PROTOTHREAD_BENCH)
+    find_package(Threads REQUIRED)
+    add_executable(ptbench protothread_bench.c)
+    target_link_libraries(ptbench PRIVATE protothread Threads::Threads)
+    # benchmark what you would ship: no debug bookkeeping, optimized
+    target_compile_definitions(ptbench PRIVATE PT_DEBUG=0)
+    target_compile_options(ptbench PRIVATE -O2)
+endif()
 
-# set the subst vars that configure_file() will use
-set(PROJECT_VERSION 1.0)
-
-set(PKG_CONFIG_LIBS
-    "-lprotothread"
-)
+# The thread-pool example needs POSIX threads too; also off by default.
+#   cmake -S . -B build -DPROTOTHREAD_EXAMPLES=ON && ./build/ptpool
+option(PROTOTHREAD_EXAMPLES "Build the POSIX thread-pool example" OFF)
+if(PROTOTHREAD_EXAMPLES)
+    find_package(Threads REQUIRED)
+    add_executable(ptpool protothread_pool_example.c)
+    target_link_libraries(ptpool PRIVATE protothread Threads::Threads)
+endif()
 
 configure_file(
   "${CMAKE_CURRENT_SOURCE_DIR}/pkg-config.pc.cmake"
   "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}.pc"
+  @ONLY
 )
 
 install (TARGETS pttest DESTINATION bin)
-install (TARGETS protothread-static protothread-shared DESTINATION lib)
-install (FILES protothread.h protothread_lock.h protothread_sem.h DESTINATION include)
+install (FILES protothread.h protothread_lock.h protothread_sem.h protothread_timer.h
+         DESTINATION include)
 
 # Install pkgconfig files to libdata on BSD, otherwise lib
 if(CMAKE_SYSTEM_NAME MATCHES "BSD")

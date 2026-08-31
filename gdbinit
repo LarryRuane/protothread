@@ -1,6 +1,10 @@
 #**************************************************************
 #* gdbinit
-#* Larry Ruane
+#* https://github.com/LarryRuane/protothread
+#* Copyright (c) 2008-present Larry Ruane
+#* Distributed under the MIT software license, see the accompanying
+#* file LICENSE or https://opensource.org/licenses/MIT.
+#* SPDX-License-Identifier: MIT
 #*
 #* Protothread stack trace macros
 #* Copy or append this file to your ~/.gdbinit file
