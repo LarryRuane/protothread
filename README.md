@@ -1,5 +1,8 @@
 ## Introduction ##
 
+[![CI](https://github.com/LarryRuane/protothread/actions/workflows/ci.yml/badge.svg)](https://github.com/LarryRuane/protothread/actions/workflows/ci.yml)
+
+
 _Note_: The multicore branch of this project has been moved to a separate repository: [Protothread-multicore](https://github.com/LarryRuane/protothread-multicore).
 
 [Protothreads](http://en.wikipedia.org/wiki/Protothreads) is a programming model invented by Adam Dunkels that combines the advantages of _event-driven_ (sometimes also called _state machine_) programming and _threaded_ programming. The main advantage of the event-driven model is efficiency, both speed and memory usage. The main advantage of the threaded model is [algorithm clarity](http://dunkels.com/adam/dunkels06protothreads.pdf). Protothreads gives you both. A protothread is an extremely lightweight thread. As with event-driven programming, there is a single stack; but like threaded programming, a function can (at least conceptually) block. This protothreads implementation:
@@ -504,12 +507,14 @@ for (;;) {
 
 This implementation requires the gcc [labels-as-values](http://gcc.gnu.org/onlinedocs/gcc/Labels-as-Values.html) extension (`&&label` and `goto *ptr`), so it needs **gcc or clang**. That includes `arm-none-eabi-gcc`, `armclang`, `avr-gcc`, `msp430-gcc` and the RISC-V toolchains. It does not work with IAR or ARMCC, which do not support computed goto; for those compilers use Dunkels' `switch`-based implementation instead.
 
-Apart from that one extension the code is ordinary C, and the test suite builds clean under `-std=c99` through `-std=c23` with `-Wall -Wextra -Werror`.
+Apart from that one extension the code is ordinary C. CI builds and runs the test suite on gcc and clang, on Linux and macOS, across `PT_DEBUG` and `NDEBUG` on and off, `PT_NWAIT` of 1, 4 and 1024, `-O0` through `-Os`, `-std=c99` through `-std=c23`, and under AddressSanitizer, UndefinedBehaviorSanitizer and ThreadSanitizer -- all with `-Wall -Wextra -Werror`. It also asserts that a freestanding build still needs no libc symbols at all, since one careless `#include` would quietly break that.
 
 Two consequences of the `__LINE__`-based label naming are worth knowing:
 
   * You cannot put two protothread macros (`pt_wait`, `pt_yield`, `pt_call`) on the same source line. This is a compile error (`duplicate label`), never a silent bug.
   * A protothread function's blocking macros must all be in the same function; you cannot hide one inside a helper macro that is used twice on one line.
+
+`pt_resume()` contains a dead address-of-label expression. That is not decoration: clang rejects an indirect `goto` in a function containing no address-of-label at all, so without it a protothread function that never blocks -- and therefore has no `pt_wait()`, `pt_yield()` or `pt_call()` to supply one -- fails to compile. It costs nothing; the generated code is byte-for-byte identical.
 
 ## Conclusion ##
 

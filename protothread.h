@@ -179,8 +179,18 @@ typedef struct pt_func_s {
 #endif
 } pt_func_t ;
 
-/* This should be at the beginning of every protothread function */
-#define pt_resume(c) do { if ((c)->pt_func.label) goto *(c)->pt_func.label ; } while (0)
+/* This should be at the beginning of every protothread function.
+ *
+ * The dead branch exists for clang, which rejects an indirect goto in a
+ * function that contains no address-of-label expression: without it, a
+ * protothread function that never blocks (so has no pt_wait(), pt_yield()
+ * or pt_call() to supply one) fails to compile. gcc accepts either form.
+ */
+#define pt_resume(c) do { \
+    __label__ pt_never ; \
+    if (0) { pt_never: (void)&&pt_never ; } \
+    if ((c)->pt_func.label) goto *(c)->pt_func.label ; \
+} while (0)
 
 /* This can be used to reset a thread or thread function */
 #define pt_reset(c) do { (c)->pt_func.label = NULL ; } while (0)

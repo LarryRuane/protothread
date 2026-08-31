@@ -104,12 +104,9 @@ debugging into a one-line call, and costs nothing in a production build.
 
 ## Smaller items ##
 
-  * **Continuous integration.** A GitHub Actions matrix over the configurations
-    the test suite already passes (`PT_DEBUG` on/off, `NDEBUG` on/off, `PT_NWAIT`
-    1/4/1024, `-O0/-Os/-O2/-O3`, ASan+UBSan, `-std=c99` through `c23`, all with
-    `-Wall -Wextra -Werror`). This would have caught the uninitialized `atexit`
-    bug and the `PT_DEBUG` ABI mismatch.
-  * **Tag a release.** `git tag -a v2.0.0`; there has never been one.
+  * ~~Continuous integration~~ -- done, `.github/workflows/ci.yml`. Its first
+    run found that the library did not build under clang at all.
+  * ~~Tag a release~~ -- done, `v2.0.0`.
   * **Document that `pt_wait`/`pt_signal` *is* a condition variable**, and that
     it needs no associated mutex because the scheduler is non-preemptive.
     People arriving from pthreads look for `pt_cond_t`, fail to find it, and
