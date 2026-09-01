@@ -129,6 +129,21 @@ debugging into a one-line call, and costs nothing in a production build.
     buys syntax for a single word where the callee's context structure already
     carries any number of values for free. See "Structure of a protothread" in
     README.md for that idiom.
+  * **Do not "simplify" `protothread_init()`.** The explicit loop that clears
+    `s->wait[]` looks like something to replace with
+    `*s = (struct protothread_s){0}`, and that is wrong. Measured undefined
+    symbols in a freestanding build at `PT_NWAIT=1024`: the loop needs none at
+    any optimization level, while the struct assignment makes gcc emit `memset`
+    and clang emit `memcpy` and `memset` at `-O0` (none at `-O1` and above). That
+    breaks the zero-libc-symbols guarantee in exactly the build someone debugging
+    on bare metal would use. `-ffreestanding` does not prevent it: the standard
+    permits a compiler to emit calls to `memcpy`, `memset`, `memmove` and
+    `memcmp` even in freestanding mode, which is why that property has to be
+    tested rather than assumed. The CI freestanding job loops `-O0` through
+    `-Os`, so it would catch a regression -- the `-O0` in that list is
+    load-bearing. (Relatedly: C has no default member initializers, the C++11
+    feature that would let the defaults live in the struct declaration itself.
+    C23's `= {}` still initializes an object, not a type.)
   * **`pt_mutex_t`.** A semaphore of 1 or the write half of the reader-writer
     lock already covers it, but a dedicated one would be smaller and could assert
     that the releaser is the owner.

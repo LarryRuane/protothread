@@ -110,7 +110,7 @@ Example 2 shows producer and consumer threads:
          *c->mailbox = 0;
          pt_signal(pt_get_pt(c), c->mailbox);
      }
-     return PT_DONE ;
+     return PT_DONE;
  }
 ```
 The producer thread waits until the mailbox is empty, then writes the next value to the mailbox and signals the consumer. The consumer thread waits until something appears in the mailbox, verifies that it's the expected value, writes a zero to signify that the mailbox is empty, and wakes up the producer. The threads signal each other using the address of the mailbox as the _channel_. It's common to use the address of the data structure whose state changes are of possible interest to waiting threads as the channel. In its role as a channel, the address is never dereferenced; it is strictly used to match signals with waits.
@@ -212,10 +212,14 @@ Any return statements you write must return `PT_DONE`; the return value belongs 
      read_context_t * const c = env;
      pt_resume(c);
 
-     for (c->count = 0; c->count < c->n; c->count++) {
-         pt_wait(c, &device_ready);      /* may block any number of times */
-     }
      c->error = 0;
+     for (c->count = 0; c->count < c->n; c->count++) {
+         pt_wait(c, &device_status);    /* may block any number of times */
+         if (device_status != 0) {
+             c->error = device_status;  /* give up on a short read */
+             return PT_DONE;
+         }
+     }
      return PT_DONE;
  }
 ```
@@ -230,7 +234,7 @@ The caller embeds that context within its own, so it can read the results as soo
      c->read.n = 100;
      pt_call(c, read_thr, &c->read);
      if (c->read.error) {
-         /* handle it */
+         /* c->read.count says how many arrived before it failed */
      }
 ```
 This costs nothing: the caller already allocates the callee's context, so there is no copying and no additional storage. When the top-level protothread function returns, the thread has exited, and control returns to the scheduler.
@@ -468,8 +472,8 @@ The fix is to not signal from the outside at all. Have the handler record what h
 ```c
 for (;;) {
     drain_pending_signals(pt) ;    /* flags -> pt_signal(), in thread context */
-    while (protothread_run(pt)) ;
-    wait_for_interrupt() ;
+    while (protothread_run(pt));
+    wait_for_interrupt();
 }
 ```
 
@@ -479,9 +483,9 @@ To signal a protothread from an interrupt handler, define the critical-section m
 
 ```c
 static inline uint32_t pt_critical_enter(void) {
-    uint32_t s = __get_PRIMASK() ;
-    __disable_irq() ;
-    return s ;
+    uint32_t s = __get_PRIMASK();
+    __disable_irq();
+    return s;
 }
 #define PT_CRITICAL_T       uint32_t
 #define PT_CRITICAL_ENTER() pt_critical_enter()
@@ -494,8 +498,8 @@ The usual bare-metal structure is an idle loop:
 
 ```c
 for (;;) {
-    while (protothread_run(&state)) ;
-    wait_for_interrupt() ;
+    while (protothread_run(&state));
+    wait_for_interrupt();
 }
 ```
 
@@ -625,12 +629,12 @@ A typical bare-metal idle loop:
 
 ```c
 for (;;) {
-    pt_timer_run(pt, &timers, clock_now()) ;
-    while (protothread_run(pt)) ;
+    pt_timer_run(pt, &timers, clock_now());
+    while (protothread_run(pt));
     if (pt_timer_next(&timers, &deadline)) {
-        sleep_until(deadline) ;
+        sleep_until(deadline);
     } else {
-        wait_for_interrupt() ;
+        wait_for_interrupt();
     }
 }
 ```
