@@ -1,27 +1,107 @@
 /**************************************************************/
 /* PROTOTHREAD.H */
-/* Copyright (c) 2019, Larry Ruane, LeftHand Networks Inc. */
-/* See license.txt */
+/* https://github.com/LarryRuane/protothread */
+/* Copyright (c) 2008-present Larry Ruane */
+/* Distributed under the MIT software license, see the accompanying */
+/* file LICENSE or https://opensource.org/licenses/MIT. */
+/* SPDX-License-Identifier: MIT */
 /**************************************************************/
 #ifndef PROTOTHREAD_H
 #define PROTOTHREAD_H 1
-#include <stdlib.h>
-#include <assert.h>
-#include <string.h>
+/* Only freestanding headers are included unconditionally, so this library
+ * can be used on a bare-metal target with no C library at all. See the
+ * "Configuration" section of README.md.
+ */
+#include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
+
+/* Version, semantic versioning (https://semver.org). This is the single
+ * source of truth; the build reads it from here. PT_VERSION_NUMBER is
+ * ordered, so a vendored copy can be tested at compile time:
+ *
+ *   #if !defined(PT_VERSION_NUMBER) || !PT_VERSION_AT_LEAST(2, 0, 0)
+ *   #error protothread 2.0.0 or later is required
+ *   #endif
+ */
+#define PT_VERSION_MAJOR 2
+#define PT_VERSION_MINOR 0
+#define PT_VERSION_PATCH 0
+
+#define PT_VERSION_NUMBER \
+    (PT_VERSION_MAJOR * 10000 + PT_VERSION_MINOR * 100 + PT_VERSION_PATCH)
+#define PT_VERSION_AT_LEAST(major, minor, patch) \
+    (PT_VERSION_NUMBER >= ((major) * 10000 + (minor) * 100 + (patch)))
+
+/* derived, so the string can never drift from the numbers */
+#define PT_STRINGIFY_HELP(x) #x
+#define PT_STRINGIFY(x) PT_STRINGIFY_HELP(x)
+#define PT_VERSION_STRING \
+    PT_STRINGIFY(PT_VERSION_MAJOR) "." \
+    PT_STRINGIFY(PT_VERSION_MINOR) "." \
+    PT_STRINGIFY(PT_VERSION_PATCH)
 
 #ifndef PT_DEBUG
 #define PT_DEBUG 1  /* enabled (else 0) */
 #endif
-#define pt_assert(condition) do { if (PT_DEBUG) assert(condition) ; } while (0)
+
+/* Define pt_assert() yourself to avoid <assert.h> entirely. The PT_DEBUG=0
+ * form still type-checks the expression without evaluating it.
+ */
+#ifndef pt_assert
+#if PT_DEBUG
+#include <assert.h>
+#define pt_assert(condition) assert(condition)
+#else
+#define pt_assert(condition) do { (void)sizeof((condition)) ; } while (0)
+#endif
+#endif
 
 /* standard definitions */
-#include <stdbool.h>
 typedef bool bool_t ;
 typedef void * env_t ;
 
-/* Number of wait queues (size of wait hash table), power of 2 */
+/* Number of wait queues (size of wait hash table), power of 2. Each entry
+ * costs one pointer, so the default costs 8KB (64-bit) per protothread_t.
+ * Set PT_NWAIT to 1 on a memory-constrained system: a single linear wait
+ * list beats hashing when there are only a handful of waiters.
+ */
+#ifndef PT_NWAIT
 #define PT_NWAIT (1 << 10)
+#endif
+
+/* Interrupt safety.
+ *
+ * The scheduler's lists are updated with several stores that are not atomic
+ * with respect to an interrupt handler. By default this library is NOT
+ * interrupt-safe: pt_signal(), pt_broadcast() and pt_kill() must be called
+ * from thread context only. Calling them from an interrupt handler can
+ * silently and permanently orphan a protothread.
+ *
+ * Define these to disable and restore interrupts to make those calls safe.
+ * They nest, so EXIT must restore the saved state rather than
+ * unconditionally enable. On Cortex-M with CMSIS:
+ *
+ *   static inline uint32_t pt_critical_enter(void) {
+ *       uint32_t s = __get_PRIMASK() ; __disable_irq() ; return s ; }
+ *   #define PT_CRITICAL_T       uint32_t
+ *   #define PT_CRITICAL_ENTER() pt_critical_enter()
+ *   #define PT_CRITICAL_EXIT(s) __set_PRIMASK(s)
+ *
+ * The critical sections are short and O(1), except that pt_wake() and
+ * pt_kill() walk one wait list.
+ */
+#ifndef PT_CRITICAL_T
+#define PT_CRITICAL_T int
+#endif
+typedef PT_CRITICAL_T pt_critical_t ;
+
+#ifndef PT_CRITICAL_ENTER
+#define PT_CRITICAL_ENTER() 0
+#endif
+#ifndef PT_CRITICAL_EXIT
+#define PT_CRITICAL_EXIT(saved) ((void)(saved))
+#endif
 
 /* Function return values; hide things a bit so user can't
  * accidentally return a NULL or an integer.
@@ -99,8 +179,18 @@ typedef struct pt_func_s {
 #endif
 } pt_func_t ;
 
-/* This should be at the beginning of every protothread function */
-#define pt_resume(c) do { if ((c)->pt_func.label) goto *(c)->pt_func.label ; } while (0)
+/* This should be at the beginning of every protothread function.
+ *
+ * The dead branch exists for clang, which rejects an indirect goto in a
+ * function that contains no address-of-label expression: without it, a
+ * protothread function that never blocks (so has no pt_wait(), pt_yield()
+ * or pt_call() to supply one) fails to compile. gcc accepts either form.
+ */
+#define pt_resume(c) do { \
+    __label__ pt_never ; \
+    if (0) { pt_never: (void)&&pt_never ; } \
+    if ((c)->pt_func.label) goto *(c)->pt_func.label ; \
+} while (0)
 
 /* This can be used to reset a thread or thread function */
 #define pt_reset(c) do { (c)->pt_func.label = NULL ; } while (0)
@@ -109,6 +199,7 @@ typedef struct pt_func_s {
 static inline void
 pt_link(pt_thread_t ** const head, pt_thread_t * const n)
 {
+    const pt_critical_t saved = PT_CRITICAL_ENTER() ;
     if (*head) {
         n->next = (*head)->next ;
         (*head)->next = n ;
@@ -116,12 +207,14 @@ pt_link(pt_thread_t ** const head, pt_thread_t * const n)
         n->next = n ;
     }
     *head = n ;
+    PT_CRITICAL_EXIT(saved) ;
 }
 
 /* unlink and return the thread following prev, updating head if necessary */
 static inline pt_thread_t *
 pt_unlink(pt_thread_t ** const head, pt_thread_t * const prev)
 {
+    const pt_critical_t saved = PT_CRITICAL_ENTER() ;
     pt_thread_t * const next = prev->next ;
     prev->next = next->next ;
     if (next == prev) {
@@ -132,6 +225,7 @@ pt_unlink(pt_thread_t ** const head, pt_thread_t * const prev)
     if (PT_DEBUG) {
         next->next = NULL ;
     }
+    PT_CRITICAL_EXIT(saved) ;
     return next ;
 }
 
@@ -142,18 +236,20 @@ pt_unlink_oldest(pt_thread_t ** const head)
     return pt_unlink(head, *head) ;
 }
 
-/* finds thread <n> in list <head> and unlinks it.  Returns TRUE if
+/* finds thread <n> in list <head> and unlinks it. Returns TRUE if
  * it was found.
  */
 static inline bool_t
 pt_find_and_unlink(pt_thread_t ** const head, pt_thread_t * const n)
 {
+    const pt_critical_t saved = PT_CRITICAL_ENTER() ;
     pt_thread_t * prev = *head ;
 
     while (*head) {
         pt_thread_t * const t = prev->next ;
         if (n == t) {
             pt_unlink(head, prev) ;
+            PT_CRITICAL_EXIT(saved) ;
             return true ;
         }
         /* Advance to next thread */
@@ -163,17 +259,22 @@ pt_find_and_unlink(pt_thread_t ** const head, pt_thread_t * const n)
             break ;
         }
     }
+    PT_CRITICAL_EXIT(saved) ;
     return false ;
 }
 
 static inline void
 pt_add_ready(state_t const s, pt_thread_t * const t)
 {
-    if (s->ready_function && !s->ready && !s->running) {
+    const pt_critical_t saved = PT_CRITICAL_ENTER() ;
+    const bool_t notify = (s->ready_function && !s->ready && !s->running) ;
+    pt_link(&s->ready, t) ;
+    PT_CRITICAL_EXIT(saved) ;
+
+    if (notify) {
         /* this should schedule protothread_run() */
         s->ready_function(s->ready_env) ;
     }
-    pt_link(&s->ready, t) ;
 }
 
 /* This is called by pt_create(), not by user code directly */
@@ -191,6 +292,7 @@ pt_create_thread(
     t->env = env ;
     t->s = s ;
     t->channel = NULL ;
+    t->atexit = NULL ;
 #if PT_DEBUG
     t->pt_func = pt_func ;
     t->next = NULL ;
@@ -228,9 +330,11 @@ pt_enqueue_wait(pt_thread_t * const t, void * const channel)
 {
     state_t const s = t->s ;
     pt_thread_t ** const wq = pt_get_wait_list(s, channel) ;
+    const pt_critical_t saved = PT_CRITICAL_ENTER() ;
     pt_assert(s->running == t) ;
     t->channel = channel ;
     pt_link(wq, t) ;
+    PT_CRITICAL_EXIT(saved) ;
 }
 
 /* Construct goto labels using the current line number (so they are unique). */
@@ -299,7 +403,7 @@ pt_enqueue_wait(pt_thread_t * const t, void * const channel)
 #define pt_call_waited(env) ((env)->pt_func.label != NULL)
 
 #define pt_create(pt, thr, func, env) \
-    pt_create_thread(pt, thr, &(env)->pt_func, func, env) ;
+    pt_create_thread(pt, thr, &(env)->pt_func, func, env)
 
 /* This allows protothreads (which might not have an explicit pointer to the
  * protothread object) to call pt_create(), pt_signal() or pt_broadcast().
@@ -313,20 +417,20 @@ pt_get_protothread(pt_func_t const * pt_func) {
 static inline void
 protothread_init(state_t const s)
 {
-    memset(s, 0, sizeof(*s)) ;
-}
-
-static inline state_t
-protothread_create(void)
-{
-    state_t const s = malloc(sizeof(*s)) ;
-    protothread_init(s) ;
-    return s ;
+    int i ;
+    s->ready_function = NULL ;
+    s->ready_env = NULL ;
+    s->running = NULL ;
+    s->ready = NULL ;
+    for (i = 0; i < PT_NWAIT; i++) {
+        s->wait[i] = NULL ;
+    }
 }
 
 static inline void
 protothread_deinit(state_t const s)
 {
+    (void)s ;
     if (PT_DEBUG) {
         int i ;
         for (i = 0; i < PT_NWAIT; i++) {
@@ -337,23 +441,45 @@ protothread_deinit(state_t const s)
     }
 }
 
+/* Dynamic allocation is optional; define PT_NO_MALLOC to drop <stdlib.h>
+ * and these two functions, and use protothread_init() on static storage.
+ */
+#ifndef PT_NO_MALLOC
+#include <stdlib.h>
+
+static inline state_t
+protothread_create(void)
+{
+    state_t const s = malloc(sizeof(*s)) ;
+    if (s) {
+        protothread_init(s) ;
+    }
+    return s ;
+}
+
 static inline void
 protothread_free(state_t const s)
 {
     protothread_deinit(s) ;
     free(s) ;
 }
+#endif /* PT_NO_MALLOC */
 
 static inline bool_t
 protothread_run(state_t const s)
 {
+    pt_critical_t saved ;
+
     pt_assert(s->running == NULL) ;
+    saved = PT_CRITICAL_ENTER() ;
     if (s->ready == NULL) {
+        PT_CRITICAL_EXIT(saved) ;
         return false ;
     }
 
     /* unlink the oldest ready thread */
     s->running = pt_unlink_oldest(&s->ready) ;
+    PT_CRITICAL_EXIT(saved) ;
 
     /* run the thread */
     s->running->func(s->running->env) ;
@@ -364,7 +490,7 @@ protothread_run(state_t const s)
 }
 
 /* Set a function to call when a protothread becomes ready. 
- * This is optional.  The passed function will generally
+ * This is optional. The passed function will generally
  * schedule a function that will call prothread_run() repeatedly
  * until it returns FALSE (or, if it limits the number of calls
  * and the last call to protothread_run() returned TRUE, it
@@ -384,6 +510,7 @@ static inline void
 pt_wake(state_t const s, void * const channel, bool_t const wake_one)
 {
     pt_thread_t ** const wq = pt_get_wait_list(s, channel) ;
+    const pt_critical_t saved = PT_CRITICAL_ENTER() ;
     pt_thread_t * prev = *wq ;  /* one before the oldest waiting thread */
 
     while (*wq) {
@@ -405,6 +532,7 @@ pt_wake(state_t const s, void * const channel, bool_t const wake_one)
             }
         }
     }
+    PT_CRITICAL_EXIT(saved) ;
 }
 
 static inline void
@@ -419,7 +547,7 @@ pt_broadcast(state_t const s, void * const channel)
     pt_wake(s, channel, false) ;
 }
 
-/* This is used to prevent a thread from scheduling again.  This can be
+/* This is used to prevent a thread from scheduling again. This can be
  * very dangerous if the thread in question isn't written to expect this
  * operation.
  */
@@ -427,17 +555,21 @@ static inline bool_t
 pt_kill(pt_thread_t * const t)
 {
     state_t const s = t->s ;
+    pt_critical_t saved ;
+    bool_t killed ;
+
     pt_assert(s->running != t) ;
 
-    if (!pt_find_and_unlink(&s->ready, t)) {
-        pt_thread_t ** const wq = pt_get_wait_list(s, t->channel) ;
-        if (!pt_find_and_unlink(wq, t)) {
-            return false ;
-        }
+    saved = PT_CRITICAL_ENTER() ;
+    killed = pt_find_and_unlink(&s->ready, t) ;
+    if (!killed) {
+        killed = pt_find_and_unlink(pt_get_wait_list(s, t->channel), t) ;
     }
-    if (t->atexit) {
+    PT_CRITICAL_EXIT(saved) ;
+
+    if (killed && t->atexit) {
         t->atexit(t->env) ;
     }
-    return true ;
+    return killed ;
 }
 #endif
