@@ -68,7 +68,7 @@ jobs:
       - run: |
           set -euo pipefail
           # gcc only learned to spell C23 as "c23" in gcc 14; older releases,
-          # including the one on ubuntu-24.04, call it "c2x".  Use whichever
+          # including the one on ubuntu-24.04, call it "c2x". Use whichever
           # this compiler understands rather than pinning the runner image.
           std="${{ matrix.std }}"
           probe() {
@@ -106,14 +106,16 @@ jobs:
               protothread_test.c -o pttest-asan
             ./pttest-asan
           done
-      - name: ThreadSanitizer on the worker-pool example
+      - name: ThreadSanitizer on the demos that use POSIX threads
         run: |
           set -euo pipefail
-          ${{ matrix.cc }} -g -O1 -fsanitize=thread -Wall -Wextra -Werror \
-            protothread_pool_example.c -o ptpool-tsan -lpthread
-          ./ptpool-tsan
+          for d in pool helper_thread ; do
+            ${{ matrix.cc }} -g -O1 -fsanitize=thread -Wall -Wextra -Werror \
+              -I. demo/$d.c -o $d-tsan -lpthread
+            ./$d-tsan
+          done
 
-  # The library claims to run with no C library at all.  That claim is easy
+  # The library claims to run with no C library at all. That claim is easy
   # to break by accident with one careless #include, so assert it directly.
   freestanding:
     name: freestanding (no libc symbols)
@@ -182,8 +184,8 @@ jobs:
           cmake --build build
           ./build/pttest
           test ! -f build/ptbench
-          test ! -f build/ptpool
-          echo "benchmark and example correctly not built by default"
+          for d in ptpool ptaio pthelper ; do test ! -f "build/$d" ; done
+          echo "benchmark and demos correctly not built by default"
       - name: Install and consume via pkg-config
         run: |
           set -euo pipefail
@@ -199,9 +201,11 @@ jobs:
       - name: Opt-in benchmark and example targets
         run: |
           set -euo pipefail
-          cmake -S . -B build-extra -DPROTOTHREAD_BENCH=ON -DPROTOTHREAD_EXAMPLES=ON
+          cmake -S . -B build-extra -DPROTOTHREAD_BENCH=ON -DPROTOTHREAD_DEMOS=ON
           cmake --build build-extra
           ./build-extra/ptpool
+          ./build-extra/ptaio
+          ./build-extra/pthelper
           ./build-extra/ptbench 20000 2000
 
   macos:
@@ -216,5 +220,7 @@ jobs:
             ./pttest
             echo "ok: ${cfg:-(default)}"
           done
-          cc -O2 -Wall -Wextra -Werror protothread_pool_example.c -o ptpool -lpthread
-          ./ptpool
+          for d in pool async_io helper_thread ; do
+            cc -O2 -Wall -Wextra -Werror -I. demo/$d.c -o "$d" -lpthread
+            "./$d"
+          done

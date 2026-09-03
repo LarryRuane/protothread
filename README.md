@@ -309,19 +309,31 @@ The usual arrangement is a pool of POSIX threads doing the heavy lifting on ever
 
 The one thing to get right is how a worker wakes a protothread: it must not call `pt_signal()` itself, for the reason given under [Lost wakeups](#lost-wakeups). It should post the finished work somewhere, and the thread that owns `protothread_run()` turns that into a `pt_signal()` between runs.
 
-`protothread_pool_example.c` is a complete working program that does this -- 500 protothreads over 4 worker threads. It is not built by default, since unlike the library it needs pthreads:
+The [`demo/`](demo) directory has three complete working programs, one for each way of combining protothreads with the outside world:
+
+| program | what it shows |
+| --- | --- |
+| [`demo/pool.c`](demo/pool.c) | 500 protothreads over a fixed pool of 4 worker threads -- the arrangement described above |
+| [`demo/async_io.c`](demo/async_io.c) | concurrent asynchronous I/O and no POSIX threads at all: one `poll()` loop turning completions into signals. `./build/ptaio -v` traces every submission and completion, which come out thoroughly interleaved |
+| [`demo/helper_thread.c`](demo/helper_thread.c) | one throwaway POSIX thread per blocking call, created and joined by the protothread that needs it |
+
+They are not built by default, since two of the three need pthreads and the library itself does not:
 
 ```
-cmake -S . -B build -DPROTOTHREAD_EXAMPLES=ON
+cmake -S . -B build -DPROTOTHREAD_DEMOS=ON
 cmake --build build
-./build/ptpool
+./build/ptpool && ./build/ptaio && ./build/pthelper
 ```
 
 ### Blocking system calls ###
 
 A protothread that makes a blocking system call stops **every** protothread, because they all share one thread and one stack. `pt_wait()` is not a system call and does not do this; `read()`, `connect()` and `fsync()` do.
 
-This is the constraint every event loop has, and it has the same two answers: use non-blocking I/O and `pt_wait()` on readiness, or hand the call to a worker thread as above.
+This is the constraint every event loop has, and it has the same two answers: use non-blocking I/O and `pt_wait()` on readiness ([`demo/async_io.c`](demo/async_io.c)), or hand the call to another thread ([`demo/pool.c`](demo/pool.c) for a standing pool, [`demo/helper_thread.c`](demo/helper_thread.c) for a thread created and joined around the one call).
+
+Handing the call to a thread is really three arrangements, not one. A thread created for the call and joined when it finishes is the cheapest thing that works, and is right when the call blocks, has no asynchronous form, and happens rarely -- no pool, no work queue, no shutdown protocol. A pool is right when the offloaded work is constant and hot, or when there are far more protothreads than you would want threads. Between them sits a dedicated helper thread per protothread, created at startup and parked between calls: it costs about 8 kB of resident memory per parked helper against 64 bytes for the protothread itself, and in exchange no protothread ever queues behind another waiting for a free worker, and each helper can hold state across calls -- a connection, an open descriptor, a thread-bound library handle that a stateless pool worker cannot keep. That last point makes it a requirement, not an optimization, for some synchronous libraries.
+
+In all three the protothreads themselves still share one thread, which is what keeps switching between them a computed goto. Giving each protothread a thread to *run on* is the thing that does not work: that is POSIX threads with extra steps.
 
 But it is worth saying plainly that blocking is often *fine*. If the call is rare and short -- reading a configuration file at startup, an occasional log flush -- the cost is that other protothreads wait a few milliseconds, and building a thread pool to avoid it is a bad trade. What to avoid is a blocking call on a hot path, where it quietly converts a system that handles thousands of concurrent activities into one that handles them one at a time. Measure before engineering around it.
 
@@ -477,7 +489,7 @@ for (;;) {
 }
 ```
 
-`protothread_pool_example.c` is a complete working program built this way. A pleasant side effect: if signals are only ever raised from the scheduler's own context, the lists are never touched concurrently and `PT_CRITICAL_*` is not needed at all.
+`demo/pool.c` is a complete working program built this way, and `demo/helper_thread.c` uses a self-pipe to the same end. A pleasant side effect: if signals are only ever raised from the scheduler's own context, the lists are never touched concurrently and `PT_CRITICAL_*` is not needed at all.
 
 To signal a protothread from an interrupt handler, define the critical-section macros to disable and restore interrupts. They must nest, so `PT_CRITICAL_EXIT()` restores the saved state rather than unconditionally enabling. On Cortex-M with CMSIS:
 
