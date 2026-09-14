@@ -489,7 +489,8 @@ protothread_deinit(state_t const s)
 static inline state_t
 protothread_create(void)
 {
-    state_t const s = malloc(sizeof(*s)) ;
+    /* the cast is redundant in C, but C++ will not convert void* implicitly */
+    state_t const s = (state_t)malloc(sizeof(*s)) ;
     if (s) {
         protothread_init(s) ;
     }

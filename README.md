@@ -25,6 +25,7 @@ The cost of nesting and arbitrary blocking is that this implementation uses [gcc
 ### What you get ###
 
   * **Header-only.** Copy the headers into your project. Nothing to build, nothing to link, no submodules, no dependencies.
+  * **Usable from C++.** The headers compile as C++ too, though protothread functions need an explicit cast from `env_t`; see [Using it from C++](#using-it-from-c).
   * **Runs with no C library at all.** A production build needs zero libc symbols and compiles `-ffreestanding`, so it works on bare metal. See [Bare-metal and embedded use](#bare-metal-and-embedded-use).
   * **Tiny.** 32 bytes of RAM per protothread and about 700 bytes of code on a 32-bit MCU.
   * **Fast.** Against POSIX threads doing the same work, measured by the [benchmark](#benchmarks) included in this repository:
@@ -585,6 +586,28 @@ Two consequences of the `__LINE__`-based label naming are worth knowing:
   * A protothread function's blocking macros must all be in the same function; you cannot hide one inside a helper macro that is used twice on one line.
 
 `pt_resume()` contains a dead address-of-label expression. That is not decoration: clang rejects an indirect `goto` in a function containing no address-of-label at all, so without it a protothread function that never blocks -- and therefore has no `pt_wait()`, `pt_yield()` or `pt_call()` to supply one -- fails to compile. It costs nothing; the generated code is byte-for-byte identical.
+
+### Using it from C++ ###
+
+The four headers compile as C++ as well as C, and CI builds and runs a real protothread -- yields, nesting through the semaphore, lock and timer helpers, and the computed goto -- under `g++` and `clang++` at `-std=c++11`, `c++17` and `c++20`.
+
+Existing C code does not port unchanged, though. Every protothread function starts by recovering its context:
+
+```c
+ctx_t * const c = env ;
+```
+
+C++ will not convert `void *` implicitly, so each one needs a cast -- `(ctx_t *)env` works in both languages, `static_cast<ctx_t *>(env)` in C++ only. That is the single most repeated line in any protothread program, so expect to touch every protothread function. (Watch for one other C/C++ difference while porting: a `struct` tag declared inside another `struct` is visible at file scope in C, but scoped to the enclosing class in C++.)
+
+One pleasant surprise: `clang++` rejects an initialized local declared after `pt_resume()` outright --
+
+```
+error: cannot jump from this indirect goto statement to one of its possible targets
+```
+
+-- because C++ forbids jumping into the scope of a variable with an initializer. That promotes the bug described under [Local variables](#local-variables) from a warning to a hard error. Note what it does *not* do: the silent case, a variable initialized *before* `pt_resume()` and re-initialized on every resume, is still accepted, so declaring those `const` remains the only thing that catches it. `g++` only warns where `clang++` errors, so the same source can build under one and fail under the other.
+
+None of this makes protothreads idiomatic C++ -- there is no RAII, no type-safe context, and for new C++ code C++20 coroutines are the native answer. What the headers offer a C++ project is the same scheduler, usable from C++ translation units, which mostly matters when C++ and C code need to share one protothread scheduler.
 
 ## Conclusion ##
 

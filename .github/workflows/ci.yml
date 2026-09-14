@@ -172,6 +172,82 @@ jobs:
             echo "$opt: no libc symbols"
           done
 
+  # The headers are C, but a C++ project should be able to include them.
+  # This is a narrow claim and easy to break with one implicit void*
+  # conversion, so compile a real protothread -- yields, nesting through the
+  # semaphore, lock and timer helpers, and the computed goto -- as C++.
+  cplusplus:
+    name: C++ (${{ matrix.cxx }} ${{ matrix.std }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cxx: [g++, clang++]
+        std: [c++11, c++17, c++20]
+    steps:
+      - uses: actions/checkout@v5
+      - run: |
+          set -euo pipefail
+          cat > cxx.cpp <<'EOF'
+          #include <cstdio>
+          #include "protothread.h"
+          #include "protothread_sem.h"
+          #include "protothread_lock.h"
+          #include "protothread_timer.h"
+
+          typedef struct {
+              pt_thread_t pt_thread ; pt_func_t pt_func ;
+              pt_sem_env_t se ; pt_lock_env_t le ; pt_timer_env_t te ;
+              int i ;
+          } ctx_t ;
+
+          static struct protothread_s state ;
+          static pt_timers_t timers ;
+          static pt_lock_t lock ;
+          static unsigned sem = 1 ;
+          static ctx_t c ;
+
+          static pt_t
+          thr(env_t const env)
+          {
+              /* C++ will not convert void* implicitly, so user code needs this cast */
+              ctx_t * const x = static_cast<ctx_t *>(env) ;
+              pt_resume(x) ;
+              for (x->i = 0; x->i < 3; x->i++) {
+                  pt_yield(x) ;
+              }
+              pt_sem_acquire(x, &x->se, &sem) ;
+              pt_sem_release(&x->se, &sem) ;
+              pt_lock_acquire_write(x, &x->le, &lock) ;
+              pt_lock_release_write(&x->le, &lock) ;
+              pt_sleep(x, &x->te, &timers, 10) ;
+              return PT_DONE ;
+          }
+
+          int
+          main(void)
+          {
+              pt_time_t t ;
+              protothread_init(&state) ;
+              pt_lock_init(&lock) ;
+              pt_timers_init(&timers, 0) ;
+              pt_create(&state, &c.pt_thread, thr, &c) ;
+              for (t = 0; t <= 20; t++) {
+                  pt_timer_run(&state, &timers, t) ;
+                  while (protothread_run(&state)) { }
+              }
+              if (c.i != 3) {
+                  std::printf("FAIL: i = %d\n", c.i) ;
+                  return 1 ;
+              }
+              protothread_deinit(&state) ;
+              std::printf("ok\n") ;
+              return 0 ;
+          }
+          EOF
+          ${{ matrix.cxx }} -std=${{ matrix.std }} -O2 -Wall -Wextra -Werror -I. cxx.cpp -o cxxtest
+          ./cxxtest
+
   cmake:
     name: cmake build, install and consume
     runs-on: ubuntu-latest
