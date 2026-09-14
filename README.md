@@ -55,6 +55,64 @@ To build and run the test suite:
 cmake -S . -B build && cmake --build build && ./build/pttest
 ```
 
+### The whole API ###
+
+This is all of it. Everything else in the headers is internal and carries a `pt_i_` or `PT_I_` prefix to say so, so anything *without* one of those prefixes is API you can rely on, and anything with one may change in any release.
+
+**The scheduler** (`protothread.h`)
+
+| call | what it does |
+|---|---|
+| `protothread_init(s)` | initialize a `protothread_t` you allocated yourself |
+| `protothread_deinit(s)` | check nothing is still scheduled (`PT_DEBUG` builds) |
+| `protothread_create()` | allocate and initialize one (needs `malloc`) |
+| `protothread_free(s)` | deinitialize and free it |
+| `protothread_run(s)` | run one ready protothread; true if more remain |
+| `protothread_set_ready_function(s, f, env)` | called when the run list becomes non-empty |
+| `pt_create(s, thread, func, env)` | create a protothread and make it ready |
+| `pt_signal(s, channel)` | make the oldest waiter on `channel` ready |
+| `pt_broadcast(s, channel)` | make every waiter on `channel` ready |
+| `pt_kill(thread)` | unschedule one; true if it was still scheduled |
+| `pt_set_atexit(thread, func)` | destructor to run at the end of `pt_kill()` |
+
+**Inside a protothread function**, where `c` is the context. All of these are macros.
+
+| call | what it does |
+|---|---|
+| `pt_resume(c)` | first statement of every protothread function |
+| `pt_wait(c, channel)` | block until `channel` is signalled |
+| `pt_yield(c)` | let other ready protothreads run, then continue |
+| `pt_call(c, func, child_c, ...)` | call a protothread function that may block |
+| `pt_call_waited(c)` | did that `pt_call()` block? |
+| `pt_reset(c)` | forget the resume point; start again from the top |
+| `pt_get_pt(c)` | the `protothread_t` this protothread belongs to |
+| `PT_DONE` | what a protothread function returns when it is finished |
+
+**Semaphores** (`protothread_sem.h`) and **reader-writer locks** (`protothread_lock.h`)
+
+| call | what it does |
+|---|---|
+| `pt_sem_acquire(c, sem_env, value)` | block until the count is non-zero, then take one |
+| `pt_sem_release(sem_env, value)` | give one back; never blocks |
+| `pt_lock_init(lock)` | initialize an unheld lock |
+| `pt_lock_acquire_read(c, lock_env, lock)` | block until read access is granted |
+| `pt_lock_acquire_write(c, lock_env, lock)` | block until exclusive access is granted |
+| `pt_lock_release_read(lock_env, lock)` | release; never blocks |
+| `pt_lock_release_write(lock_env, lock)` | release; never blocks |
+
+**Timers** (`protothread_timer.h`). This library never reads a clock; you drive it.
+
+| call | what it does |
+|---|---|
+| `pt_timers_init(timers, now)` | initialize a timer set |
+| `pt_sleep(c, timer_env, timers, ticks)` | block for `ticks` of your own clock |
+| `pt_timer_run(s, timers, now)` | wake everything now due; call this on a tick |
+| `pt_timer_cancel(timers, timer_env)` | wake a sleeper early; true if it was pending |
+| `pt_timer_next(timers, deadline)` | soonest deadline, for an idle loop |
+| `pt_time_after(a, b)` | wraparound-safe time comparison |
+
+Types: `protothread_t`, `pt_thread_t`, `pt_func_t`, `pt_t`, `pt_f_t`, `env_t`, `bool_t`, `pt_sem_env_t`, `pt_lock_t`, `pt_lock_env_t`, `pt_timers_t`, `pt_timer_env_t`, `pt_time_t`. The compile-time knobs are under [Configuration](#configuration).
+
 ## Threads without stacks ##
 
 The key concept of any protothreads implementation is that when a function wants to wait for an event to occur (that is, suspend itself and let other threads run), it saves its current location within the function (conceptually its line number or program counter), and returns back to the scheduler or idle loop, releasing use of the stack. The scheduler runs a different thread, handles interrupts or waits for an external event to occur. When the event occurs, the scheduler calls the function in the usual way, and the first thing the function does is `goto` the previously saved location. This location might be within levels of nested loops and `if` statements.
@@ -170,8 +228,8 @@ Now for the details. The two most interesting calls in this example are `pt_resu
              /* pt_wait(c, c->mailbox) expanded: *****/
              do {
                  (c)->pt_func.label = &&pt_label_18;
-                 pt_enqueue_wait((c)->pt_func.thread, c->mailbox);
-                 return PT_WAIT;
+                 pt_i_enqueue_wait((c)->pt_func.thread, c->mailbox);
+                 return PT_I_WAIT;
                pt_label_18:;
              } while (0);
              /* pt_wait end *****/
@@ -182,7 +240,7 @@ Now for the details. The two most interesting calls in this example are `pt_resu
      return PT_DONE;
  }
 ```
-The first time the thread runs, its label variable is `NULL`, so it does not `goto` -- the code enters the `for` loop from the top. When it reaches the call to `pt_wait()`, it saves the address of the label (whose name is derived from the line number, `__LINE__`; note the double-ampersand syntax to denote the address corresponding to a label), enqueues the thread on a _waiting_ list within the protothreads object (and it's going to wait for a signal on the address of the mailbox), and returns `PT_WAIT`. (The return value is not used in this example; as explained later it is used only if there are nested protothread functions.)
+The first time the thread runs, its label variable is `NULL`, so it does not `goto` -- the code enters the `for` loop from the top. When it reaches the call to `pt_wait()`, it saves the address of the label (whose name is derived from the line number, `__LINE__`; note the double-ampersand syntax to denote the address corresponding to a label), enqueues the thread on a _waiting_ list within the protothreads object (and it's going to wait for a signal on the address of the mailbox), and returns `PT_I_WAIT`. (The return value is not used in this example; as explained later it is used only if there are nested protothread functions.)
 
 When this thread is resumed, the label variable is non-NULL, so `pt_resume()` jumps to the value of the label variable, and execution continues from where it left off. In this case, the producer thread continues in the `while` loop, waiting for the mailbox to become empty. As when using POSIX condition variables, it's common to re-test the condition being waited for.
 
@@ -285,7 +343,7 @@ That converts the silent failure above into a hard compile error, in both gcc an
 
 ### Protothread function nesting ###
 
-How does function nesting work? When protothread function **A** calls (using `pt_call()`) a protothread function **B**, and **B** wants to block (`pt_wait()`), **B** saves its current location into its context and returns `PT_WAIT` to the `pt_call()` in **A**, which causes it to save into **A**'s context as its resume point exactly where it calls **B**. **A** then returns `PT_WAIT` to its caller. When the scheduler resumes the thread, **A** runs, its `pt_resume()` jumps to the call to **B**, so **A** calls **B**, and **B**'s `pt_resume()` jumps to just after where it had blocked and continues running. So the stack unwinds when the thread blocks, and "forward-winds" when it resumes. This is how the overall system still uses a single stack. Also, it should be clear now why evaluating the arguments that **A** passes to **B** should have no side effects -- **A** calls **B** every time the thread is resumed.
+How does function nesting work? When protothread function **A** calls (using `pt_call()`) a protothread function **B**, and **B** wants to block (`pt_wait()`), **B** saves its current location into its context and returns `PT_I_WAIT` to the `pt_call()` in **A**, which causes it to save into **A**'s context as its resume point exactly where it calls **B**. **A** then returns `PT_I_WAIT` to its caller. When the scheduler resumes the thread, **A** runs, its `pt_resume()` jumps to the call to **B**, so **A** calls **B**, and **B**'s `pt_resume()` jumps to just after where it had blocked and continues running. So the stack unwinds when the thread blocks, and "forward-winds" when it resumes. This is how the overall system still uses a single stack. Also, it should be clear now why evaluating the arguments that **A** passes to **B** should have no side effects -- **A** calls **B** every time the thread is resumed.
 
 When **B** finally finishes and returns `PT_DONE`, **A** knows to continue running following the `pt_call()` to **B**.
 
@@ -504,7 +562,7 @@ static inline uint32_t pt_critical_enter(void) {
 #define PT_CRITICAL_EXIT(s) __set_PRIMASK(s)
 ```
 
-The critical sections are short and O(1), except that `pt_wake()` and `pt_kill()` walk one wait list. If interrupt latency is critical, keep `PT_NWAIT` large enough that wait lists stay short, or have the interrupt handler set a flag that the main loop turns into a `pt_signal()` at a safe point.
+The critical sections are short and O(1), except that `pt_signal()`, `pt_broadcast()` and `pt_kill()` walk one wait list. If interrupt latency is critical, keep `PT_NWAIT` large enough that wait lists stay short, or have the interrupt handler set a flag that the main loop turns into a `pt_signal()` at a safe point.
 
 The usual bare-metal structure is an idle loop:
 

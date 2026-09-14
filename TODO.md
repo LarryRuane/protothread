@@ -49,7 +49,7 @@ Two things to fix or document:
         scheduler state: running=STALE (non-NULL) ready=nonempty
 
    After that, `protothread_run()`'s `pt_assert(s->running == NULL)` fires in a
-   debug build, and in a production build `pt_add_ready()`'s `!s->running` test
+   debug build, and in a production build `pt_i_add_ready()`'s `!s->running` test
    is wrong permanently, so `ready_function` never fires again. The throwing
    protothread is also off every list with its context un-freed. Any C++ use
    needs `protothread_run()` to restore `s->running` on the way out -- a

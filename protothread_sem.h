@@ -11,7 +11,13 @@
 
 #include "protothread.h"
 
-typedef struct _pt_sem_env_t {
+/* Counting semaphore. The public API; pt_i_ names are internal.
+ *   pt_sem_acquire(c, sem_env, value)   block until non-zero, then take one
+ *   pt_sem_release(sem_env, value)      give one back; never blocks
+ *   pt_sem_env_t                        one per protothread that acquires
+ */
+
+typedef struct pt_sem_env_s {
     pt_func_t pt_func ;
 } pt_sem_env_t ;
 
@@ -27,7 +33,7 @@ typedef struct _pt_sem_env_t {
  */
 
 static inline pt_t
-pt_sem_acquire_f(pt_sem_env_t *c, unsigned int *value)
+pt_i_sem_acquire(pt_sem_env_t *c, unsigned int *value)
 {
     pt_resume(c) ;
     while (!(*value)) {
@@ -36,7 +42,7 @@ pt_sem_acquire_f(pt_sem_env_t *c, unsigned int *value)
     (*value) -- ;
     return PT_DONE ;
 }
-#define pt_sem_acquire(c, sem_env, value) pt_call(c, pt_sem_acquire_f, sem_env, value)
+#define pt_sem_acquire(c, sem_env, value) pt_call(c, pt_i_sem_acquire, sem_env, value)
 
 /* guaranteed not to break context */
 static inline void
