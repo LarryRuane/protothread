@@ -176,6 +176,67 @@ jobs:
   # This is a narrow claim and easy to break with one implicit void*
   # conversion, so compile a real protothread -- yields, nesting through the
   # semaphore, lock and timer helpers, and the computed goto -- as C++.
+  # Three internal functions require the caller to already be in a critical
+  # section. PT_CRITICAL_* are no-ops by default, so a future call from thread
+  # context would break that silently and nothing would complain. Define them
+  # as a depth counter and PT_CRITICAL_ASSERT() to check it, then run the suite.
+  critical-sections:
+    name: critical-section discipline (${{ matrix.cc }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cc: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v5
+      - name: Count critical-section depth and assert it where required
+        run: |
+          set -euo pipefail
+          # __builtin_trap(), not assert(): this must survive NDEBUG and
+          # PT_DEBUG=0, which are two of the configurations being checked.
+          cat > ptcheck.h <<'EOF'
+          static int pt_cs_depth ;
+          static inline int pt_cs_enter(void) { return pt_cs_depth++ ; }
+          static inline void pt_cs_exit(int saved) { pt_cs_depth = saved ; }
+          #define PT_CRITICAL_T           int
+          #define PT_CRITICAL_ENTER()     pt_cs_enter()
+          #define PT_CRITICAL_EXIT(s)     pt_cs_exit(s)
+          #define PT_CRITICAL_ASSERT() \
+              do { if (pt_cs_depth <= 0) __builtin_trap() ; } while (0)
+          EOF
+
+          # Negative control FIRST. If the check cannot fail, the rest of this
+          # job proves nothing -- which is exactly how the first draft of it
+          # passed while testing an uninstrumented header.
+          cat > negative.c <<'EOF'
+          #include "protothread.h"
+          int main(void) { PT_CRITICAL_ASSERT() ; return 0 ; }
+          EOF
+          ${{ matrix.cc }} -O1 -Wall -Wextra -Werror -I. -include ptcheck.h \
+            negative.c -o negative
+          if ./negative ; then
+            echo "FAIL: PT_CRITICAL_ASSERT() did not trap at depth 0;" \
+                 "the harness is inert and would pass no matter what" >&2
+            exit 1
+          fi
+          echo "negative control trapped as required"
+
+          fail=0
+          for cfg in "" "-DPT_DEBUG=0" "-DNDEBUG" "-DPT_NWAIT=1" "-DPT_NWAIT=4" \
+                     "-DPT_NWAIT=1 -DPT_DEBUG=0 -DNDEBUG" ; do
+            for opt in -O0 -O1 -O2 -Os ; do
+              printf '%-38s %-4s ' "${cfg:-(default)}" "$opt"
+              if ${{ matrix.cc }} $opt $cfg -Wall -Wextra -Werror -I. \
+                   -include ptcheck.h protothread_test.c -o pttest 2> err.txt \
+                 && ./pttest > /dev/null ; then
+                echo PASS
+              else
+                echo FAIL ; sed 's/^/    /' err.txt ; fail=1
+              fi
+            done
+          done
+          exit $fail
+
   cplusplus:
     name: C++ (${{ matrix.cxx }} ${{ matrix.std }})
     runs-on: ubuntu-latest

@@ -557,6 +557,9 @@ All configuration is by preprocessor macro. Because the library is header-only, 
 `PT_CRITICAL_T`, `PT_CRITICAL_ENTER()`, `PT_CRITICAL_EXIT(saved)`
 > Mutual exclusion against interrupt handlers. See [Interrupt safety](#interrupt-safety). No-ops by default.
 
+`PT_CRITICAL_ASSERT()`
+> Checks that the caller really is in a critical section where the scheduler requires it. Compiles to nothing by default. CI defines it against a depth counter, so that a change which starts touching a list from thread context fails loudly instead of silently; you can define it on a real target the same way.
+
 ### Defining the critical-section macros ###
 
 To signal a protothread from an interrupt handler, define the critical-section macros to disable and restore interrupts. They must nest, so `PT_CRITICAL_EXIT()` restores the saved state rather than unconditionally enabling. On Cortex-M with CMSIS:

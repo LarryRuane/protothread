@@ -139,6 +139,15 @@ typedef PT_CRITICAL_T pt_critical_t ;
 #define PT_CRITICAL_EXIT(saved) ((void)(saved))
 #endif
 
+/* Several internal functions require the caller to already be in a critical
+ * section. That is a comment and nothing more, since the macros above are
+ * no-ops by default. Define this to check it -- on a target where entering a
+ * critical section is observable, or as CI does, with a depth counter.
+ */
+#ifndef PT_CRITICAL_ASSERT
+#define PT_CRITICAL_ASSERT() do { } while (0)
+#endif
+
 /* Function return values; hide things a bit so user can't
  * accidentally return a NULL or an integer.
  */
@@ -237,6 +246,7 @@ typedef struct pt_func_s {
 static inline void
 pt_i_link(pt_thread_t ** const head, pt_thread_t * const n)
 {
+    PT_CRITICAL_ASSERT() ;
     if (*head) {
         n->next = (*head)->next ;
         (*head)->next = n ;
@@ -252,6 +262,7 @@ pt_i_link(pt_thread_t ** const head, pt_thread_t * const n)
 static inline pt_thread_t *
 pt_i_unlink(pt_thread_t ** const head, pt_thread_t * const prev)
 {
+    PT_CRITICAL_ASSERT() ;
     pt_thread_t * const next = prev->next ;
     prev->next = next->next ;
     if (next == prev) {
@@ -280,6 +291,7 @@ pt_i_unlink_oldest(pt_thread_t ** const head)
 static inline bool_t
 pt_i_find_and_unlink(pt_thread_t ** const head, pt_thread_t * const n)
 {
+    PT_CRITICAL_ASSERT() ;
     pt_thread_t * prev = *head ;
 
     while (*head) {
