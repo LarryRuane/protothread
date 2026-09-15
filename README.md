@@ -964,4 +964,13 @@ My thanks to Paul Soulier for introducing me to the concept of protothreads, and
 
 The project lives at [github.com/LarryRuane/protothread](https://github.com/LarryRuane/protothread). [TODO.md](TODO.md) lists ideas and deferred work, if you are looking for somewhere to start.
 
-Bug reports, questions and pull requests are welcome as [GitHub issues](https://github.com/LarryRuane/protothread/issues) -- please prefer those to email, so that other people can find the answers. Otherwise: _LarryRuane@gmail.com_
+Bug reports, questions and pull requests are welcome as [GitHub issues](https://github.com/LarryRuane/protothread/issues) -- please prefer those to email, so that other people can find the answers. Otherwise: _LarryRuane@gmail.com_, or [@LarryRuane](https://x.com/LarryRuane) on X if email doesn't reach me.
+
+### Tips ###
+
+If this saved you some time and you would like to say so, tips are welcome -- entirely optional.
+
+Lightning: `larryruane@speed.app` -- any amount from one satoshi, and most wallets will let you attach a short message.
+
+On-chain Bitcoin: send me a message and I'll give you an address. I would rather hand out a fresh one than publish a single address for everyone to reuse.
+

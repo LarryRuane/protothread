@@ -1,0 +1,4 @@
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/displaying-a-sponsor-button-in-your-repository
+# Lightning addresses are not a built-in provider, so point the Sponsor button
+# at the README section, which can list more methods without touching this file.
+custom: ["https://github.com/LarryRuane/protothread#tips"]
