@@ -1,5 +1,5 @@
 /**************************************************************/
-/* PROTOTHREAD_POOL_EXAMPLE.C */
+/* DEMO/POOL.C */
 /* https://github.com/LarryRuane/protothread */
 /* Copyright (c) 2008-present Larry Ruane */
 /* Distributed under the MIT software license, see the accompanying */

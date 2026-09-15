@@ -31,7 +31,7 @@ static void
 test_create_dynamic(void)
 {
     protothread_t const pt = protothread_create() ;
-    protothread_run(pt) ;
+    check(!protothread_run(pt)) ;       /* nothing is ready */
     protothread_free(pt) ;
 }
 
@@ -43,7 +43,7 @@ test_create_static(void)
     struct protothread_s static_pt ;
     protothread_t const pt = &static_pt ;
     protothread_init(pt) ;
-    protothread_run(pt) ;
+    check(!protothread_run(pt)) ;       /* nothing is ready */
     protothread_deinit(pt) ;
 }
 
@@ -73,7 +73,7 @@ test_thread_create(void)
 
     for (i = 0; i < 1000; i++) {
         pt_create(pt, &c->pt_thread, create_thr, c) ;
-        protothread_run(pt) ;
+        check(!protothread_run(pt)) ;
     }
     free(c) ;
     protothread_free(pt) ;
@@ -110,12 +110,13 @@ test_yield(void)
     pt_create(pt, &c->pt_thread, yield_thr, c) ;
 
     /* it hasn't run yet at all, make it reach the yield */
-    protothread_run(pt) ;
+    check(protothread_run(pt)) ;        /* it yielded, so it is ready again */
 
     for (i = 0; i < 10; i++) {
         /* make sure the protothread advances its loop */
         check(i == c->i) ;
-        protothread_run(pt) ;
+        /* the last iteration runs it off the end of its loop */
+        check(protothread_run(pt) == (i < 9)) ;
     }
     free(c) ;
     protothread_free(pt) ;
@@ -157,7 +158,7 @@ test_wait(void)
 
     /* threads haven't run yet at all, make them reach the wait */
     for (j = 0; j < 10; j++) {
-        protothread_run(pt) ;
+        check(protothread_run(pt) == (j < 9)) ;
     }
 
     for (i = 0; i < 10; i++) {
@@ -173,16 +174,16 @@ test_wait(void)
 
         /* run each thread once */
         for (j = 0; j < 10; j++) {
-            protothread_run(pt) ;
+            check(protothread_run(pt) == (j < 9)) ;
         }
         for (j = 0; j < 10; j++) {
             check(i+1 == c[j]->i) ;
         }
 
         /* extra steps and wrong signals shouldn't advance the thread */
-        protothread_run(pt) ;
+        check(!protothread_run(pt)) ;
         pt_broadcast(pt, c[0]) ;
-        protothread_run(pt) ;
+        check(!protothread_run(pt)) ; /* nobody waits on that channel */
         for (j = 0; j < 10; j++) {
             check(i+1 == c[j]->i) ;
         }
@@ -251,7 +252,7 @@ test_broadcast(void)
 
     /* threads haven't run yet at all, make them reach the wait */
     for (j = 0; j < N; j++) {
-        protothread_run(pt) ;
+        check(protothread_run(pt) == (j < N-1)) ;
     }
 
     for (i = 0; i < 10000; i++) {
@@ -751,9 +752,9 @@ test_func_pointer(void)
     /* pt_create() can take a function pointer */
     c.level2.ran = false ;
     pt_create(pt, &c.pt_thread, func_ptr, &c) ;
-    protothread_run(pt) ;
+    check(protothread_run(pt)) ;        /* level 2 yielded */
     check(!c.level2.ran) ;
-    protothread_run(pt) ;
+    check(!protothread_run(pt)) ;       /* now it runs off the end */
     check(c.level2.ran) ;
 
     protothread_free(pt) ;
@@ -975,14 +976,14 @@ test_reset(void)
      */
     pt_create(pt, &c->pt_thread, reset_thr, c) ;
 
-    protothread_run(pt) ;
+    check(protothread_run(pt)) ;
     check(c->i == 0) ;
 
-    protothread_run(pt) ;
+    check(protothread_run(pt)) ;
     check(c->i == 1) ;
     pt_reset(c) ;
 
-    protothread_run(pt) ;
+    check(protothread_run(pt)) ;
     check(c->i == 0) ;
 
     while (protothread_run(pt)) ;

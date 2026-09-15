@@ -68,7 +68,7 @@ jobs:
       - run: |
           set -euo pipefail
           # gcc only learned to spell C23 as "c23" in gcc 14; older releases,
-          # including the one on ubuntu-24.04, call it "c2x".  Use whichever
+          # including the one on ubuntu-24.04, call it "c2x". Use whichever
           # this compiler understands rather than pinning the runner image.
           std="${{ matrix.std }}"
           probe() {
@@ -106,14 +106,16 @@ jobs:
               protothread_test.c -o pttest-asan
             ./pttest-asan
           done
-      - name: ThreadSanitizer on the worker-pool example
+      - name: ThreadSanitizer on the demos that use POSIX threads
         run: |
           set -euo pipefail
-          ${{ matrix.cc }} -g -O1 -fsanitize=thread -Wall -Wextra -Werror \
-            protothread_pool_example.c -o ptpool-tsan -lpthread
-          ./ptpool-tsan
+          for d in pool helper_thread ; do
+            ${{ matrix.cc }} -g -O1 -fsanitize=thread -Wall -Wextra -Werror \
+              -I. demo/$d.c -o $d-tsan -lpthread
+            ./$d-tsan
+          done
 
-  # The library claims to run with no C library at all.  That claim is easy
+  # The library claims to run with no C library at all. That claim is easy
   # to break by accident with one careless #include, so assert it directly.
   freestanding:
     name: freestanding (no libc symbols)
@@ -170,6 +172,143 @@ jobs:
             echo "$opt: no libc symbols"
           done
 
+  # The headers are C, but a C++ project should be able to include them.
+  # This is a narrow claim and easy to break with one implicit void*
+  # conversion, so compile a real protothread -- yields, nesting through the
+  # semaphore, lock and timer helpers, and the computed goto -- as C++.
+  # Three internal functions require the caller to already be in a critical
+  # section. PT_CRITICAL_* are no-ops by default, so a future call from thread
+  # context would break that silently and nothing would complain. Define them
+  # as a depth counter and PT_CRITICAL_ASSERT() to check it, then run the suite.
+  critical-sections:
+    name: critical-section discipline (${{ matrix.cc }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cc: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v5
+      - name: Count critical-section depth and assert it where required
+        run: |
+          set -euo pipefail
+          # __builtin_trap(), not assert(): this must survive NDEBUG and
+          # PT_DEBUG=0, which are two of the configurations being checked.
+          cat > ptcheck.h <<'EOF'
+          static int pt_cs_depth ;
+          static inline int pt_cs_enter(void) { return pt_cs_depth++ ; }
+          static inline void pt_cs_exit(int saved) { pt_cs_depth = saved ; }
+          #define PT_CRITICAL_T           int
+          #define PT_CRITICAL_ENTER()     pt_cs_enter()
+          #define PT_CRITICAL_EXIT(s)     pt_cs_exit(s)
+          #define PT_CRITICAL_ASSERT() \
+              do { if (pt_cs_depth <= 0) __builtin_trap() ; } while (0)
+          EOF
+
+          # Negative control FIRST. If the check cannot fail, the rest of this
+          # job proves nothing -- which is exactly how the first draft of it
+          # passed while testing an uninstrumented header.
+          cat > negative.c <<'EOF'
+          #include "protothread.h"
+          int main(void) { PT_CRITICAL_ASSERT() ; return 0 ; }
+          EOF
+          ${{ matrix.cc }} -O1 -Wall -Wextra -Werror -I. -include ptcheck.h \
+            negative.c -o negative
+          if ./negative ; then
+            echo "FAIL: PT_CRITICAL_ASSERT() did not trap at depth 0;" \
+                 "the harness is inert and would pass no matter what" >&2
+            exit 1
+          fi
+          echo "negative control trapped as required"
+
+          fail=0
+          for cfg in "" "-DPT_DEBUG=0" "-DNDEBUG" "-DPT_NWAIT=1" "-DPT_NWAIT=4" \
+                     "-DPT_NWAIT=1 -DPT_DEBUG=0 -DNDEBUG" ; do
+            for opt in -O0 -O1 -O2 -Os ; do
+              printf '%-38s %-4s ' "${cfg:-(default)}" "$opt"
+              if ${{ matrix.cc }} $opt $cfg -Wall -Wextra -Werror -I. \
+                   -include ptcheck.h protothread_test.c -o pttest 2> err.txt \
+                 && ./pttest > /dev/null ; then
+                echo PASS
+              else
+                echo FAIL ; sed 's/^/    /' err.txt ; fail=1
+              fi
+            done
+          done
+          exit $fail
+
+  cplusplus:
+    name: C++ (${{ matrix.cxx }} ${{ matrix.std }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cxx: [g++, clang++]
+        std: [c++11, c++17, c++20]
+    steps:
+      - uses: actions/checkout@v5
+      - run: |
+          set -euo pipefail
+          cat > cxx.cpp <<'EOF'
+          #include <cstdio>
+          #include "protothread.h"
+          #include "protothread_sem.h"
+          #include "protothread_lock.h"
+          #include "protothread_timer.h"
+
+          typedef struct {
+              pt_thread_t pt_thread ; pt_func_t pt_func ;
+              pt_sem_env_t se ; pt_lock_env_t le ; pt_timer_env_t te ;
+              int i ;
+          } ctx_t ;
+
+          static struct protothread_s state ;
+          static pt_timers_t timers ;
+          static pt_lock_t lock ;
+          static unsigned sem = 1 ;
+          static ctx_t c ;
+
+          static pt_t
+          thr(env_t const env)
+          {
+              /* C++ will not convert void* implicitly, so user code needs this cast */
+              ctx_t * const x = static_cast<ctx_t *>(env) ;
+              pt_resume(x) ;
+              for (x->i = 0; x->i < 3; x->i++) {
+                  pt_yield(x) ;
+              }
+              pt_sem_acquire(x, &x->se, &sem) ;
+              pt_sem_release(&x->se, &sem) ;
+              pt_lock_acquire_write(x, &x->le, &lock) ;
+              pt_lock_release_write(&x->le, &lock) ;
+              pt_sleep(x, &x->te, &timers, 10) ;
+              return PT_DONE ;
+          }
+
+          int
+          main(void)
+          {
+              pt_time_t t ;
+              protothread_init(&state) ;
+              pt_lock_init(&lock) ;
+              pt_timers_init(&timers, 0) ;
+              pt_create(&state, &c.pt_thread, thr, &c) ;
+              for (t = 0; t <= 20; t++) {
+                  pt_timer_run(&state, &timers, t) ;
+                  while (protothread_run(&state)) { }
+              }
+              if (c.i != 3) {
+                  std::printf("FAIL: i = %d\n", c.i) ;
+                  return 1 ;
+              }
+              protothread_deinit(&state) ;
+              std::printf("ok\n") ;
+              return 0 ;
+          }
+          EOF
+          ${{ matrix.cxx }} -std=${{ matrix.std }} -O2 -Wall -Wextra -Werror -I. cxx.cpp -o cxxtest
+          ./cxxtest
+
   cmake:
     name: cmake build, install and consume
     runs-on: ubuntu-latest
@@ -182,8 +321,8 @@ jobs:
           cmake --build build
           ./build/pttest
           test ! -f build/ptbench
-          test ! -f build/ptpool
-          echo "benchmark and example correctly not built by default"
+          for d in ptpool ptaio pthelper ; do test ! -f "build/$d" ; done
+          echo "benchmark and demos correctly not built by default"
       - name: Install and consume via pkg-config
         run: |
           set -euo pipefail
@@ -199,9 +338,11 @@ jobs:
       - name: Opt-in benchmark and example targets
         run: |
           set -euo pipefail
-          cmake -S . -B build-extra -DPROTOTHREAD_BENCH=ON -DPROTOTHREAD_EXAMPLES=ON
+          cmake -S . -B build-extra -DPROTOTHREAD_BENCH=ON -DPROTOTHREAD_DEMOS=ON
           cmake --build build-extra
           ./build-extra/ptpool
+          ./build-extra/ptaio
+          ./build-extra/pthelper
           ./build-extra/ptbench 20000 2000
 
   macos:
@@ -216,5 +357,7 @@ jobs:
             ./pttest
             echo "ok: ${cfg:-(default)}"
           done
-          cc -O2 -Wall -Wextra -Werror protothread_pool_example.c -o ptpool -lpthread
-          ./ptpool
+          for d in pool async_io helper_thread ; do
+            cc -O2 -Wall -Wextra -Werror -I. demo/$d.c -o "$d" -lpthread
+            "./$d"
+          done
