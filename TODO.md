@@ -152,3 +152,35 @@ debugging into a one-line call, and costs nothing in a production build.
   * **Killing a sleeping protothread** leaves a dangling entry on the timer list
     unless `pt_timer_cancel()` is called first; same hazard the reader-writer
     lock has. Documented, but could be handled automatically via `pt_atexit`.
+  * **A lock-free completion queue, and the wakeup it does not solve.** Both
+    `demo/pool.c` and `demo/helper_thread.c` carry finished work from another
+    thread back to the scheduler, one through a mutex-protected array and the
+    other through a self-pipe. Either could be a lock-free multi-producer queue
+    instead. A Treiber stack fits particularly well: producers CAS a node onto a
+    head pointer, the consumer takes the whole list in one atomic exchange and
+    walks it, order comes out LIFO and can be reversed. No capacity limit, no
+    allocation, and the nodes can be intrusive, since `pt_thread_t` already has
+    a `next`. Single-producer is easier still -- a ring needs no CAS at all,
+    only a release-store of the index after the payload.
+
+    The catch is that this replaces only half of what the pipe does. A
+    lock-free structure in memory cannot wake a thread asleep in `poll()`, so
+    an OS primitive is still required for the wakeup: condvar, eventfd,
+    semaphore or signal. The queue and the wakeup are separable concerns and
+    only the queue can be made lock-free. That is also why the two demos differ
+    on purpose. `pool.c` waits on nothing but its workers, so a condvar is both
+    simpler and faster than a pipe -- an uncontended mutex costs tens of
+    nanoseconds against two syscalls. A self-pipe earns its keep when one
+    `poll()` has to cover real I/O *and* cross-thread notification, and when
+    the notifier is a signal handler, where `write()` is async-signal-safe and
+    a mutex is not.
+
+    Portability points the same way. `pipe()` is POSIX and needs a loopback
+    socketpair on Windows; `eventfd()` is cheaper but Linux-only; and on bare
+    metal there are no pipes at all, which is exactly where a queue drained by
+    the main loop is the mechanism the README's "Lost wakeups" section already
+    prescribes. If any of this ever moves into the library itself, note that
+    `<stdatomic.h>` is C11 and is not a freestanding header, so requiring it
+    would cost both the `-std=c99` support and the zero-libc claim -- whereas
+    the gcc/clang `__atomic_*` builtins work at any `-std`, and the library
+    already requires those compilers for computed goto.
