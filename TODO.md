@@ -79,6 +79,46 @@ Timers are done (`protothread_timer.h`). Remaining, most useful first:
     can come from either the primitive or the timer. Raw `pt_wait()` on a shared
     channel cannot support this, because a thread can only be on one wait list
     (`pt_thread_t` has a single `channel` field and a single `next` pointer).
+  * **A bounded-delay sweep, and a lost-wakeup detector.** A production system
+    that hangs on a lost signal is usually worse off than one that recovers
+    after 100 ms and complains. This is not the hack it first looks like: the
+    "Wait channels" section argues that `pt_wait()` is a busy-wait loop with a
+    delay inserted, and a real spin loop cannot miss anything because it
+    re-tests continuously. Bounding the delay buys back exactly the property
+    that was traded away, and turns a lost wakeup from a liveness bug into a
+    latency bug. The predicate loop makes it safe by construction -- a timeout
+    wake is one more turn of a loop that was always entitled to turn.
+
+    Note that this does *not* need the wait-with-timeout machinery above. A
+    global sweep -- every N ticks, move every waiting protothread to the ready
+    list -- sidesteps the single-`channel`, single-`next` constraint entirely:
+    no per-thread timer, no dual list membership, O(waiting) per sweep, and
+    almost everyone re-tests and goes straight back to waiting. A thousand
+    waiters swept at 10 Hz is ten thousand resumes a second, under a tenth of a
+    percent of a core on a hosted system.
+
+    The detector is the more valuable half, and works with or without the
+    recovery. After a sweep wake, the scheduler can see whether a protothread
+    went back onto the same wait list or made progress. If it made progress its
+    predicate was true and nobody had signalled -- a lost wakeup, and with
+    `PT_DEBUG` on, `pt_func_t` already carries the `__FILE__`/`__LINE__` to name
+    the wait site. Evidence rather than proof, since the predicate could have
+    become true in a benign race, but precisely targeted.
+
+    Two constraints if this is built. It must be driven by the caller's clock,
+    not a real one, or it costs the determinism claim -- `pt_timer_run()`
+    already takes `now` as an argument, so a test build on simulated time stays
+    reproducible while production uses the real thing. And it must be
+    compile-time optional and off by default: on an MCU that would otherwise
+    idle for seconds in `wait_for_interrupt()`, a 10 Hz sweep is a real power
+    cost.
+
+    The objection to answer is that self-healing hides bugs. A hang is trivial
+    to diagnose with the gdb macros in this repository -- dump every
+    protothread's stack and see who is stuck on what -- whereas a system that
+    quietly recovers every 100 ms has buried the same defect. That is an
+    argument for building the detector first and the recovery second, and for
+    the log line naming the wait site rather than counting sweeps.
   * **`pt_join()`.** The README says outright that the system cannot tell you
     when a thread exits. The exiting thread broadcasts on its own
     `pt_thread_t` address; an "exited" flag avoids losing a late join.
