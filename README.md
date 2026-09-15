@@ -416,6 +416,32 @@ The context for function **A** can include **B**'s context structure within its 
 
 Another interesting idea is that if **A** calls **B** and after **B** returns **A** calls **C** (so **B** and **C** are not running at the same time), the contexts for **B** and **C** can be members of a `union` within **A**'s context. This sharing of memory between **B** and **C** reflects what happens within the stack of a POSIX thread.
 
+### Wait channels ###
+
+`pt_wait()`, `pt_signal()` and `pt_broadcast()` are a condition variable with the `pthread_cond_t` left out. The channel is any address -- by convention the address of the variable whose value you are waiting on -- so there is nothing to declare, allocate, initialize or destroy, and no bookkeeping about which condition variable belongs to which datum. This is the `sleep()`/`wakeup()` interface of the early Unix kernels, and Linux arrived at the same shape from the other direction: a `futex` is wait-and-wake on an address, and every pthreads primitive on Linux is built on one.
+
+There is no associated mutex because the scheduler is non-preemptive. `pthread_cond_wait()` needs one to make "test the predicate" and "suspend" a single indivisible step; between protothreads nothing runs in between, so they already are. That is also exactly why signalling from an interrupt handler or another OS thread is unsafe -- it reopens the gap the mutex exists to close. See [Lost wakeups](#lost-wakeups).
+
+**It is universal**, which is the main argument for it. Every blocking synchronization primitive in common use can be built on top of it, and this repository is the demonstration rather than the claim: the semaphores in `protothread_sem.h`, the reader-writer lock in `protothread_lock.h` and the sleeps in `protothread_timer.h` are all ordinary protothread code over `pt_wait()` and `pt_signal()`, with no privileged access to the scheduler. If you need a barrier, a latch or a message queue, you write it the same way, in your own code, without patching the library.
+
+**And the mental model stays simple.** A protothread waits for a condition to be *true*, not for an event to *happen*. The distinction matters: a condition can be re-tested at leisure, an event can be missed. So the simplest correct way to wait is to spin on the predicate:
+
+```c
+while (!ready) { }
+```
+
+Obviously right, and obviously wasteful. `pt_wait()` changes none of that logic. It inserts a delay, so the protothread stops consuming the CPU and is likely to find the condition true when it next looks:
+
+```c
+while (!ready) {
+    pt_wait(c, &ready) ;
+}
+```
+
+You can always reason about the second as the first. That is also why the predicate is re-tested in a `while` and not an `if`: a wakeup means the condition *may* now be true, never that it is, and a wakeup that proves premature costs one extra turn of a loop that was always entitled to iterate.
+
+The analogy has one limit, and it is worth knowing where. A real spin loop can never miss anything, because it re-tests continuously. `pt_wait()`'s delay ends only when somebody signals, so a lost signal is not a slow wait but a permanent one. That is the entire subject of [Lost wakeups](#lost-wakeups), and it is the one place the busy-wait intuition will mislead you.
+
 ## Deterministic execution ##
 
 An important advantage of event-driven software over POSIX threads is that execution can be entirely deterministic. Protothreads shares this advantage. Why does this matter? Because it allows one to write pseudo-random tests that can reliably reproduce bugs. You start the test with a randomly-chosen random number generator seed, and if a bug is found during the run, you can start the test again with the same seed (perhaps with more tracing enabled or new assertions added to catch the problem earlier), and the test is guaranteed to follow exactly the same sequence of states and thus reproduce the bug. This also often allows you to verify a proposed fix (unless the fix changes the execution sequence in a way that invalidates the seed).

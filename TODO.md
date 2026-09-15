@@ -107,10 +107,10 @@ debugging into a one-line call, and costs nothing in a production build.
   * ~~Continuous integration~~ -- done, `.github/workflows/ci.yml`. Its first
     run found that the library did not build under clang at all.
   * ~~Tag a release~~ -- done, `v2.0.0`.
-  * **Document that `pt_wait`/`pt_signal` *is* a condition variable**, and that
-    it needs no associated mutex because the scheduler is non-preemptive.
-    People arriving from pthreads look for `pt_cond_t`, fail to find it, and
-    conclude something is missing that is not.
+  * ~~Document that `pt_wait`/`pt_signal` *is* a condition variable~~ -- done,
+    the "Wait channels" section of README.md, which also makes the case for the
+    interface: it is universal, and it degenerates to a busy-wait loop you can
+    always reason about.
   * **Better wait-list hash.** `((uintptr_t)chan >> 4) & (PT_NWAIT-1)` clusters
     badly when channels are elements of an array of structures: 1000 contexts of
     128 bytes reach only 128 of 1024 buckets, with chains 8 long. A multiply-shift
