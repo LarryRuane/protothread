@@ -25,7 +25,7 @@ The cost of nesting and arbitrary blocking is that this implementation uses [gcc
   * **Header-only.** Copy the headers into your project. Nothing to build, nothing to link, no submodules, no dependencies.
   * **Usable from C++.** The headers compile as C++ too, though protothread functions need an explicit cast from `env_t`; see [Using it from C++](#using-it-from-c).
   * **Runs with no C library at all.** A production build needs zero libc symbols and compiles `-ffreestanding`, so it runs on a bare microcontroller with no RTOS underneath it -- where the one thing to know is that it is **not interrupt-safe by default**. See [Bare-metal and embedded use](#bare-metal-and-embedded-use) and [Interrupt safety](#interrupt-safety).
-  * **Tiny.** 32 bytes of RAM per protothread and about 700 bytes of code on a 32-bit microcontroller.
+  * **Tiny, and exactly known.** 32 bytes of RAM per protothread and about 700 bytes of code on a 32-bit microcontroller -- with no per-thread stack to size, so that figure is a number the compiler can tell you rather than a worst-case guess.
   * **Fast.** Against POSIX threads doing the same work, measured by the [benchmark](#benchmarks) included in this repository:
 
 | | protothread | pthread | ratio |
@@ -478,6 +478,10 @@ Each protothread function context has a `pt_func_t` structure, which is 2 pointe
 Add roughly 8 bytes of real C stack per level of `pt_call()` nesting: a protothread is stackless between waits, but while it is running, a chain of `pt_call()`s is an ordinary chain of C calls.
 
 For comparison, an RTOS task typically costs a control block of about 90 bytes plus a stack of at least several hundred bytes, so a protothread is on the order of twenty times cheaper.
+
+There is a second saving that the table cannot show: you do not have to guess. Sizing a stack for a POSIX thread or an RTOS task means predicting its worst-case depth, which depends on the compiler, the optimization level, inlining decisions and the ABI. A debug build generally needs more stack than the optimized build the size was measured against, so the `-O0` binary you are stepping through can overflow a stack that production never troubles. Guess high and the waste is multiplied by the number of threads; guess low and you get an intermittent corruption that is hard to attribute to the thread that caused it.
+
+Protothreads do not abolish that question, but they reduce it from N instances of it to one. There is a single stack, sized once for the deepest `pt_call()` chain plus whatever your interrupt handlers need, with no per-thread safety margin multiplied by the thread count. Everything that has to survive blocking lives in the context structure instead, and the compiler will tell you exactly how big that is with `sizeof`.
 
 Note that `PT_DEBUG` adds four fields to `pt_func_t` and one to `pt_thread_t` for the debugger macros, roughly tripling the per-thread cost. It is on by default; turn it off in production builds.
 
