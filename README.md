@@ -26,7 +26,7 @@ The cost of nesting and arbitrary blocking is that this implementation uses [gcc
   * **Usable from C++.** The headers compile as C++ too, though protothread functions need an explicit cast from `env_t`; see [Using it from C++](#using-it-from-c).
   * **Runs with no C library at all.** A production build needs zero libc symbols and compiles `-ffreestanding`, so it runs on a bare microcontroller with no RTOS underneath it -- where the one thing to know is that it is **not interrupt-safe by default**. See [Bare-metal and embedded use](#bare-metal-and-embedded-use) and [Interrupt safety](#interrupt-safety).
   * **Tiny, and exactly known.** 32 bytes of RAM per protothread and about 700 bytes of code on a 32-bit microcontroller -- with no per-thread stack to size, so that figure is a number the compiler can tell you rather than a worst-case guess.
-  * **Deterministic, which makes bugs reproducible.** The schedule is decided by your program rather than the OS, so a seeded pseudo-random test replays exactly and a failure found in hour three of a soak test can be reproduced on demand. This is not free -- you also have to make time, the network and every other outside input injectable -- but protothreads removes the one source of nondeterminism you cannot reach from inside your own program. See [Deterministic execution](#deterministic-execution).
+  * **Deterministic, which makes bugs reproducible.** The schedule is decided by your program rather than the OS, so a seeded pseudo-random test replays exactly and a failure found in hour three of a soak test can be reproduced on demand. This is not free -- every external interface has to be mockable, time included -- but protothreads removes the one source of nondeterminism you cannot reach from inside your own program. See [Deterministic execution](#deterministic-execution).
   * **Fast.** Against POSIX threads doing the same work, measured by the [benchmark](#benchmarks) included in this repository:
 
 | | protothread | pthread | ratio |
@@ -200,7 +200,7 @@ Here is a protothreads version of the famous producer-consumer algorithm with tw
 ```
 Besides the first two fields, which are used by the protothreads system, the structure contains a counting index, `i`, and a pointer the mailbox that the threads will share. For the producer, the `i` is the next value to write to the mailbox; for the consumer, it's the next value to expect from the mailbox. A value of zero in the mailbox means it is empty.
 
-Example 2 shows producer and consumer threads:
+Here are the producer and consumer threads:
 ```
  static pt_t
  producer_thr(void * const env)
@@ -449,7 +449,7 @@ An important advantage of event-driven software over POSIX threads is that execu
 
 Of course, the entire environment must be carefully controlled so that no nondeterminism can sneak into the system. It may be necessary, for example, to simulate time; the code should not make any decisions based on real (wall-clock) time, because real time will differ from run to run. The random number generator should be used for anything that is non-deterministic in the real system (such as delays in simulated network or disk transfers).
 
-That is real work, and protothreads does not do it for you: swapping out the network, and time itself, is most of the effort. What protothreads contributes is the one piece you could not otherwise obtain, because it is the one piece that is not yours to control. Once the inputs are under your program's control, so is the execution.
+That is real work, and protothreads does not do it for you. Making every external interface mockable -- the network, the disk, the clock -- is most of the effort, and it is a constraint on the whole design, not a test harness bolted on afterwards. What protothreads contributes is the one piece you could not otherwise obtain, because it is the one piece that is not yours to control. Once the inputs are under your program's control, so is the execution.
 
 With POSIX threads this is much harder to arrange, because the thread scheduler is outside the test program's control and in my experience makes decisions that vary from run to run. It is not impossible, though: determinism can be imposed from the outside, either by a replacement runtime such as [DThreads](https://plasma.cs.umass.edu/emery/dthreads.html) or [Parrot](https://sigops.org/s/conferences/sosp/2013/papers/p388-cui.pdf), which serialize thread synchronization into a fixed order, or by a supervising tool such as [rr](https://rr-project.org/) (record and deterministic replay) or [Hermit](https://github.com/facebookexperimental/hermit) (a deterministic sandbox that also controls time, thread interleaving and randomness). These work, and rr in particular is worth knowing about for any concurrent C program. But each buys determinism with an external mechanism and a slowdown, and the deterministic run is not the run you ship. Protothreads are deterministic by construction, with no tooling at all, and the schedule you debug is the schedule that runs in production.
 
@@ -663,7 +663,7 @@ For many resource-constrained or real-time applications, using protothreads give
 
 ### Thread execution context ###
 
-These are macros (designed to look and act like function calls) whose first argument is a pointer to a user-defined context structure, `c` (assume the context structure's name is `context_t`, but that is up the the user). The type `pt_f_t` is a pointer to a protothread function.
+These are macros (designed to look and act like function calls) whose first argument is a pointer to a user-defined context structure, `c` (assume the context structure's name is `context_t`, but that is up to the user). The type `pt_f_t` is a pointer to a protothread function.
 
 `void pt_resume(struct context_t *c)`
 > Every thread function must call this macro first, after initializing any local variables (which must be a function only of the arguments and each other, not any global state; see [Local variables](#local-variables)). If the thread is being resumed, `pt_resume()` causes it to `goto` the resumption point, which is where this function last blocked. If the function is being called for the first time (that is, the thread is not being resumed), `pt_resume()` has no effect.
