@@ -23,7 +23,7 @@ The cost of nesting and arbitrary blocking is that this implementation uses [gcc
 ### What you get ###
 
   * **Header-only.** Copy the headers into your project. Nothing to build, nothing to link, no submodules, no dependencies.
-  * **Usable from C++.** The headers compile as C++ too, though protothread functions need an explicit cast from `env_t`; see [Using it from C++](#using-it-from-c).
+  * **Usable from C++.** The headers compile as C++ too, though top-level protothread functions need an explicit cast from `env_t`; see [Using it from C++](#using-it-from-c).
   * **Runs with no C library at all.** A production build needs zero libc symbols and compiles `-ffreestanding`, so it runs on a bare microcontroller with no RTOS underneath it -- where the one thing to know is that it is **not interrupt-safe by default**. See [Bare-metal and embedded use](#bare-metal-and-embedded-use) and [Interrupt safety](#interrupt-safety).
   * **Tiny, and exactly known.** 32 bytes of RAM per protothread and about 700 bytes of code on a 32-bit microcontroller -- with no per-thread stack to size, so that figure is a number the compiler can tell you rather than a worst-case guess.
   * **Deterministic, which makes bugs reproducible.** The schedule is decided by your program rather than the OS, so a seeded pseudo-random test replays exactly and a failure found in hour three of a soak test can be reproduced on demand. This is not free -- every external interface has to be mockable, time included -- but protothreads removes the one source of nondeterminism you cannot reach from inside your own program. See [Deterministic execution](#deterministic-execution).
@@ -311,7 +311,7 @@ This structure also contains user-defined state that is specific to that functio
 There are only two ways to run a protothread function; a protothread function should never be called directly.
 
   * Any code (a regular function or a protothread function) can call `pt_create()` to create a new thread. You specify a function address and a context pointer which is passed to the function as its only argument. This call schedules the thread (does not run it directly). A scheduled thread can be cancelled with `pt_kill()`, but only if it was written to expect that. The protothread system does not notify you when a thread exits normally; that's up to you to arrange if you need to know. The `pt_create()` call also requires a unique (to this thread) `pt_thread_t` structure, which can be allocated anywhere, but is typically included within the top-level function's context structure (as in the structure `pc_thread_context_t` above).
-  * A protothread function can execute `pt_call()`. This has the same semantics as a normal function call, but you must use `pt_call()` when calling a protothread function. Any number of arguments of any types may be passed to the called function (and the usual compiler type checking applies), but the first argument must be a pointer to a context structure (which contains a `pt_func` member) for the called function to use to hold its state.
+  * A protothread function can execute `pt_call()`. This has the same semantics as a normal function call, but you must use `pt_call()` when calling a protothread function. Any number of arguments of any types may be passed to the called function (and the usual compiler type checking applies), but the first argument must be a pointer to a context structure (which contains a `pt_func` member) for the called function to use to hold its state. Because `pt_call()` calls the function directly, that parameter can be declared with its real type -- `read_context_t * const c`, not `env_t` -- and the compiler checks it like any other argument. Only a *top-level* function, the one passed to `pt_create()`, has to take `env_t` and cast it, because the scheduler keeps every protothread's function in one list and cannot know their types. (A nested function called through a `pt_f_t` function pointer needs `env_t` too, for the same reason.)
 
 Any return statements you write must return `PT_DONE`; the return value belongs to the protothreads system, which uses it to propagate blocking up the call chain. That is less of a restriction than it looks, because the caller owns the callee's context structure, which makes a better return channel than a return value would be: it carries any number of values of any types, and unlike a return value it survives blocking. Declare the results alongside the arguments:
 ```
@@ -323,9 +323,8 @@ Any return statements you write must return `PT_DONE`; the return value belongs 
  } read_context_t;
 
  static pt_t
- read_thr(env_t const env)
+ read_thr(read_context_t * const c)    /* typed: no env_t, no cast */
  {
-     read_context_t * const c = env;
      pt_resume(c);
 
      c->error = 0;
@@ -388,7 +387,7 @@ This diagnostic used to require `-O2` or higher, because it depended on optimize
 ```
 This compiles cleanly under `-Wall -Wextra` on both gcc and clang at every optimization level, which makes it the more dangerous of the two. If a local is assigned in one part of a protothread function and read after a block, move it into the context structure.
 
-**The safe exception.** Initializing a local before `pt_resume()` is fine, and idiomatic, when its value is a pure function of the arguments and it is then used read-only -- re-running the initializer on each entry recomputes the same value. That is what the `c = env;` line does in every example here. For the same reason the initializer must have no side effects.
+**The safe exception.** Initializing a local before `pt_resume()` is fine, and idiomatic, when its value is a pure function of the arguments and it is then used read-only -- re-running the initializer on each entry recomputes the same value. That is what the `c = env;` line does at the top of every top-level protothread function here. For the same reason the initializer must have no side effects.
 
 **Declare those locals `const`.** Read-only is not merely a convention here, it is a correctness requirement, so let the compiler enforce it:
 ```
@@ -637,13 +636,13 @@ Two consequences of the `__LINE__`-based label naming are worth knowing:
 
 The four headers compile as C++ as well as C, and CI builds and runs a real protothread -- yields, nesting through the semaphore, lock and timer helpers, and the computed goto -- under `g++` and `clang++` at `-std=c++11`, `c++17` and `c++20`.
 
-Existing C code does not port unchanged, though. Every protothread function starts by recovering its context:
+Existing C code does not port unchanged, though. Every top-level protothread function -- the ones passed to `pt_create()` -- starts by recovering its context:
 
 ```c
 ctx_t * const c = env;
 ```
 
-C++ will not convert `void *` implicitly, so each one needs a cast -- `(ctx_t *)env` works in both languages, `static_cast<ctx_t *>(env)` in C++ only. That is the single most repeated line in any protothread program, so expect to touch every protothread function. (Watch for one other C/C++ difference while porting: a `struct` tag declared inside another `struct` is visible at file scope in C, but scoped to the enclosing class in C++.)
+C++ will not convert `void *` implicitly, so each one needs a cast -- `(ctx_t *)env` works in both languages, `static_cast<ctx_t *>(env)` in C++ only. Only top-level functions need that. A nested function reached through `pt_call()` can declare its context parameter with its real type, which needs no cast in either language and is better C besides -- so in existing code written the other way, the cure for a nested function is to type its parameter, not to cast it. (Watch for one other C/C++ difference while porting: a `struct` tag declared inside another `struct` is visible at file scope in C, but scoped to the enclosing class in C++.)
 
 One pleasant surprise: `clang++` rejects an initialized local declared after `pt_resume()` outright --
 
