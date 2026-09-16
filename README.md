@@ -162,7 +162,7 @@ The fix is to not signal from the outside at all. Have the handler record what h
 
 ```c
 for (;;) {
-    drain_pending_signals(pt) ;    /* flags -> pt_signal(), in thread context */
+    drain_pending_signals(pt);    /* flags -> pt_signal(), in thread context */
     while (protothread_run(pt));
     wait_for_interrupt();
 }
@@ -435,7 +435,7 @@ Obviously right, and obviously wasteful. `pt_wait()` changes none of that logic.
 
 ```c
 while (!ready) {
-    pt_wait(c, &ready) ;
+    pt_wait(c, &ready);
 }
 ```
 
@@ -642,7 +642,7 @@ The four headers compile as C++ as well as C, and CI builds and runs a real prot
 Existing C code does not port unchanged, though. Every protothread function starts by recovering its context:
 
 ```c
-ctx_t * const c = env ;
+ctx_t * const c = env;
 ```
 
 C++ will not convert `void *` implicitly, so each one needs a cast -- `(ctx_t *)env` works in both languages, `static_cast<ctx_t *>(env)` in C++ only. That is the single most repeated line in any protothread program, so expect to touch every protothread function. (Watch for one other C/C++ difference while porting: a `struct` tag declared inside another `struct` is visible at file scope in C, but scoped to the enclosing class in C++.)
