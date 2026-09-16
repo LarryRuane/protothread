@@ -113,63 +113,6 @@ This is all of it. Everything else in the headers is internal and carries a `pt_
 
 Types: `protothread_t`, `pt_thread_t`, `pt_func_t`, `pt_t`, `pt_f_t`, `env_t`, `bool_t`, `pt_sem_env_t`, `pt_lock_t`, `pt_lock_env_t`, `pt_timers_t`, `pt_timer_env_t`, `pt_time_t`. The compile-time knobs are under [Configuration](#configuration).
 
-## Bare-metal and embedded use ##
-
-Protothreads were invented for memory-constrained embedded systems, and this implementation is usable on a bare microcontroller: no operating system, no heap, and no C library.
-
-Only freestanding headers (`<stddef.h>`, `<stdint.h>`, `<stdbool.h>`) are included unconditionally. With this configuration:
-
-```
--DPT_DEBUG=0 -DPT_NO_MALLOC -DPT_NWAIT=1
-```
-
-and `protothread_init()` on static storage, a program that uses protothreads, semaphores and reader-writer locks compiles under `-ffreestanding` and requires **zero libc symbols** at every optimization level. The scheduler plus one protothread costs about 700 bytes of code and 20 bytes of state, plus 32 bytes per protothread.
-
-### Interrupt safety ###
-
-**By default this library is not interrupt-safe.** The scheduler's lists are updated with several stores that are not atomic with respect to an interrupt handler. If an interrupt lands in the middle of one, a protothread can be silently and permanently orphaned: removed from its wait queue, never placed on the run queue, and unreachable by any future signal. No assertion fires.
-
-So by default, `pt_signal()`, `pt_broadcast()` and `pt_kill()` must be called only from thread context, never from an interrupt handler.
-
-Defining the macros ([how](#defining-the-critical-section-macros)) changes that for those three calls, and for `pt_timer_run()`. It does **not** change it for `protothread_run()`, which must never be called from an interrupt handler under any configuration -- it runs your thread code, and an interrupt that re-enters it would start a second protothread on top of the one already running. The division is worth stating plainly:
-
-| | from an interrupt handler |
-|---|---|
-| `pt_signal()`, `pt_broadcast()` | lists stay intact once `PT_CRITICAL_*` are defined |
-| `pt_kill()`, `pt_timer_run()` | lists stay intact once `PT_CRITICAL_*` are defined |
-| `protothread_run()` | **never safe** |
-| `pt_wait()`, `pt_yield()`, `pt_call()` | never -- these only run inside a protothread |
-
-Note the wording: "lists stay intact" is not the same as "correct". There is a second, independent hazard, described next.
-
-#### Lost wakeups ####
-
-`PT_CRITICAL_*` protects the scheduler's data structures. It does **not** make the ordinary condition-variable idiom safe against a signal from outside:
-
-```
-    protothread                     interrupt handler / other thread
-    -----------                     --------------------------------
-    while (!job->done)     <--- tests the predicate: false
-                                    job->done = 1
-                                    pt_signal(pt, job)   <-- nothing is
-                                        waiting yet, so this is LOST
-        pt_wait(c, job)    <--- enqueues, and sleeps forever
-```
-
-The predicate test and `pt_wait()`'s enqueue are not atomic with respect to another context, and no critical section can make them so, because `pt_wait()` returns from the function. Among protothreads this race cannot happen -- nothing runs in between -- which is exactly why it is easy to overlook when an interrupt handler is added later.
-
-The fix is to not signal from the outside at all. Have the handler record what happened -- set a flag, push onto a queue -- and have the loop that owns `protothread_run()` turn that into a `pt_signal()` **between** protothread runs. At that point no protothread is mid-execution, so every waiter has finished enqueuing:
-
-```c
-for (;;) {
-    drain_pending_signals(pt);    /* flags -> pt_signal(), in thread context */
-    while (protothread_run(pt));
-    wait_for_interrupt();
-}
-```
-
-`demo/pool.c` is a complete working program built this way, and `demo/helper_thread.c` uses a self-pipe to the same end. A pleasant side effect: if signals are only ever raised from the scheduler's own context, the lists are never touched concurrently and `PT_CRITICAL_*` is not needed at all.
-
 ## Threads without stacks ##
 
 The key concept of any protothreads implementation is that when a function wants to wait for an event to occur (that is, suspend itself and let other threads run), it saves its current location within the function (conceptually its line number or program counter), and returns back to the scheduler or idle loop, releasing use of the stack. The scheduler runs a different thread, handles interrupts or waits for an external event to occur. When the event occurs, the scheduler calls the function in the usual way, and the first thing the function does is `goto` the previously saved location. This location might be within levels of nested loops and `if` statements.
@@ -265,9 +208,67 @@ The main test function allocates the overall protothread object or instance (`pt
      protothread_free(pt);
  }
 ```
+
+## Bare-metal and embedded use ##
+
+Protothreads were invented for memory-constrained embedded systems, and this implementation is usable on a bare microcontroller: no operating system, no heap, and no C library.
+
+Only freestanding headers (`<stddef.h>`, `<stdint.h>`, `<stdbool.h>`) are included unconditionally. With this configuration:
+
+```
+-DPT_DEBUG=0 -DPT_NO_MALLOC -DPT_NWAIT=1
+```
+
+and `protothread_init()` on static storage, a program that uses protothreads, semaphores and reader-writer locks compiles under `-ffreestanding` and requires **zero libc symbols** at every optimization level. The scheduler plus one protothread costs about 700 bytes of code and 20 bytes of state, plus 32 bytes per protothread.
+
+### Interrupt safety ###
+
+**By default this library is not interrupt-safe.** The scheduler's lists are updated with several stores that are not atomic with respect to an interrupt handler. If an interrupt lands in the middle of one, a protothread can be silently and permanently orphaned: removed from its wait queue, never placed on the run queue, and unreachable by any future signal. No assertion fires.
+
+So by default, `pt_signal()`, `pt_broadcast()` and `pt_kill()` must be called only from thread context, never from an interrupt handler.
+
+Defining the macros ([how](#defining-the-critical-section-macros)) changes that for those three calls, and for `pt_timer_run()`. It does **not** change it for `protothread_run()`, which must never be called from an interrupt handler under any configuration -- it runs your thread code, and an interrupt that re-enters it would start a second protothread on top of the one already running. The division is worth stating plainly:
+
+| | from an interrupt handler |
+|---|---|
+| `pt_signal()`, `pt_broadcast()` | lists stay intact once `PT_CRITICAL_*` are defined |
+| `pt_kill()`, `pt_timer_run()` | lists stay intact once `PT_CRITICAL_*` are defined |
+| `protothread_run()` | **never safe** |
+| `pt_wait()`, `pt_yield()`, `pt_call()` | never -- these only run inside a protothread |
+
+Note the wording: "lists stay intact" is not the same as "correct". There is a second, independent hazard, described next.
+
+#### Lost wakeups ####
+
+`PT_CRITICAL_*` protects the scheduler's data structures. It does **not** make the ordinary condition-variable idiom safe against a signal from outside:
+
+```
+    protothread                     interrupt handler / other thread
+    -----------                     --------------------------------
+    while (!job->done)     <--- tests the predicate: false
+                                    job->done = 1
+                                    pt_signal(pt, job)   <-- nothing is
+                                        waiting yet, so this is LOST
+        pt_wait(c, job)    <--- enqueues, and sleeps forever
+```
+
+The predicate test and `pt_wait()`'s enqueue are not atomic with respect to another context, and no critical section can make them so, because `pt_wait()` returns from the function. Among protothreads this race cannot happen -- nothing runs in between -- which is exactly why it is easy to overlook when an interrupt handler is added later.
+
+The fix is to not signal from the outside at all. Have the handler record what happened -- set a flag, push onto a queue -- and have the loop that owns `protothread_run()` turn that into a `pt_signal()` **between** protothread runs. At that point no protothread is mid-execution, so every waiter has finished enqueuing:
+
+```c
+for (;;) {
+    drain_pending_signals(pt);    /* flags -> pt_signal(), in thread context */
+    while (protothread_run(pt));
+    wait_for_interrupt();
+}
+```
+
+`demo/pool.c` is a complete working program built this way, and `demo/helper_thread.c` uses a self-pipe to the same end. A pleasant side effect: if signals are only ever raised from the scheduler's own context, the lists are never touched concurrently and `PT_CRITICAL_*` is not needed at all.
+
 ## How does it work? ##
 
-Now for the details. The two most interesting calls in this example are `pt_resume()` and `pt_wait()`. Let's expand these in the producer thread function to see how they work. (The full API reference manual is given at the end of this article.) The `pt_func` member of the context structure contains the protothreads-private _function context_; the protothread macros access this field by name.
+Now for the details. The two most interesting calls in the producer/consumer example are `pt_resume()` and `pt_wait()`. Let's expand these in the producer thread function to see how they work. (The full API reference manual is given at the end of this article.) The `pt_func` member of the context structure contains the protothreads-private _function context_; the protothread macros access this field by name.
 ```
  static pt_t
  producer_thr(void * const env)
