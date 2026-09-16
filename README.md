@@ -659,80 +659,100 @@ For many resource-constrained or real-time applications, using protothreads give
 
 These are macros (designed to look and act like function calls) whose first argument is a pointer to a user-defined context structure, `c` (assume the context structure's name is `context_t`, but that is up to the user). The type `pt_f_t` is a pointer to a protothread function.
 
-`void pt_resume(struct context_t *c)`
+> `void pt_resume(struct context_t *c)`
+>
 > Every thread function must call this macro first, after initializing any local variables (which must be a function only of the arguments and each other, not any global state; see [Local variables](#local-variables)). If the thread is being resumed, `pt_resume()` causes it to `goto` the resumption point, which is where this function last blocked. If the function is being called for the first time (that is, the thread is not being resumed), `pt_resume()` has no effect.
 
-`void pt_wait(struct context_t *c, void *channel)`
+> `void pt_wait(struct context_t *c, void *channel)`
+>
 > Block until a signal is sent to the given channel. The channel is an arbitrary `void *` value which is usually chosen to be the address of a data structure whose state change the thread is interested. A channel itself has no state; the protothread system never uses the channel as an address (does not dereference it). Typically, after this function returns the condition being waited for is re-evaluated. Analogous to [POSIX pthread\_cond\_wait()](http://www.opengroup.org/onlinepubs/009695399/functions/pthread_cond_wait.html).
 
-`void pt_yield(struct context_t *c)`
+> `void pt_yield(struct context_t *c)`
+>
 > Reschedule the current thread and release the CPU. It is like `pt_wait()` on a channel that is immediately signaled. The current thread queues itself behind all ready to run threads and returns control to the scheduler.
 
-`void pt_call(struct context_t *c, pt_f_t child_func, struct child_context_t *child_context, arg...)`
+> `void pt_call(struct context_t *c, pt_f_t child_func, struct child_context_t *child_context, arg...)`
+>
 > Immediately call the given protothread function, passing it the given environment and arguments, and wait for it to return. There can be no context switch between the start of this statement and the start of the child function. Be careful that argument evaluation has no side effects, since this call occurs every time the thread is resumed. The usual C compile-time type checking is performed on all arguments.
 
-`bool_t pt_call_waited(struct context_t *c)`
+> `bool_t pt_call_waited(struct context_t *c)`
+>
 > Returns TRUE if the most recent `pt_call()` blocked (either directly in the called function, or in a function that it called, recursively). If function **A** calls **B** and **B** blocks, then when it finally returns to **A**, it's sometimes helpful for **A** to know that other threads might have run, so it should reevaluate the state of the world. But if **B** didn't block, then **A** knows that only a limited change of state (namely, whatever **B** might do) could have occurred.
 
-`void pt_reset(struct context_t *c)`
+> `void pt_reset(struct context_t *c)`
+>
 > Forget this function's saved resume point, so that the next time it runs it starts from the top rather than from where it last blocked. Useful to restart a protothread function, or to reuse a context structure.
 
-`protothread_t pt_get_pt(struct context_t *c)`
+> `protothread_t pt_get_pt(struct context_t *c)`
+>
 > This returns the protothread object handle (`protothread_t`). It is a convenience that allows code in a thread context to call API functions that require a protothread object argument, such as `pt_create()` or `pt_signal()`.
 
 ### Either thread or non-thread execution context ###
 
-`void pt_create(protothread_t, pt_thread_t *, pt_f_t func, void *env)`
+> `void pt_create(protothread_t, pt_thread_t *, pt_f_t func, void *env)`
+>
 > Schedule the given protothread function to run, passing it the given environment. This function becomes the top-level function of the thread. There is no context break between this call and the caller's next statement. The new thread queues behind all ready threads. Analogous to [POSIX pthread\_create()](http://www.opengroup.org/onlinepubs/009695399/functions/pthread_create.html).
 
-`void pt_broadcast(protothread_t, void *channel)`
+> `void pt_broadcast(protothread_t, void *channel)`
+>
 > Send a signal to the given channel, which wakes up (schedules) all threads waiting on the channel to run in the same order they blocked. If there are no threads waiting, this call has no effect; the signal is not queued (there is no "memory" associated with a channel). These threads queue behind all ready threads. Analogous to [POSIX pthread\_cond\_broadcast()](http://www.opengroup.org/onlinepubs/009695399/functions/pthread_cond_broadcast.html).
 
-`void pt_signal(protothread_t, void *channel)`
+> `void pt_signal(protothread_t, void *channel)`
+>
 > Same as `pt_broadcast()` but wakes up only one (the oldest) waiting thread. Analogous to [POSIX pthread\_cond\_signal()](http://www.opengroup.org/onlinepubs/009695399/functions/pthread_cond_signal.html).
 
-`bool_t pt_kill(pt_thread_t *)`
+> `bool_t pt_kill(pt_thread_t *)`
+>
 > Remove a thread from whatever list it is on, so that it is never scheduled again. Returns TRUE if the thread was found (it is not an error to kill a thread that has already exited). This is dangerous unless the thread was written to expect it: the thread is stopped wherever it happens to be blocked, and any resources it holds -- allocated contexts, semaphores, locks -- are not released. Do not call this on the currently running thread. If a destructor was installed with `pt_set_atexit()`, it runs after the thread is unlinked.
 
-`void pt_set_atexit(pt_thread_t *, void (*func)(void *env))`
+> `void pt_set_atexit(pt_thread_t *, void (*func)(void *env))`
+>
 > Install an optional destructor, called with the thread's top-level environment when `pt_kill()` removes the thread. It is not called when a thread exits normally by returning `PT_DONE`. Call this after `pt_create()`, which clears it.
 
-`protothread_t protothread_create(void)`
+> `protothread_t protothread_create(void)`
+>
 > This is usually only called once to create the overall protothread object. It returns the protothread handle (or NULL if allocation fails). The protothread system uses no global variables. All protothread state is within this object; multiple protothread instances are independent. This is the only protothread API function that allocates memory, and it can be compiled out with `PT_NO_MALLOC`.
 
-`void protothread_free(protothread_t)`
+> `void protothread_free(protothread_t)`
+>
 > Free the state allocated with `protothread_create()`. There must be no threads associated with this object.
 
-`void protothread_init(protothread_t)`
+> `void protothread_init(protothread_t)`
+>
 > Initialize a `struct protothread_s` that you allocated yourself, statically or otherwise. This is the alternative to `protothread_create()` on systems with no heap.
 
-`void protothread_deinit(protothread_t)`
+> `void protothread_deinit(protothread_t)`
+>
 > The counterpart to `protothread_init()`. It frees nothing; when `PT_DEBUG` is set it asserts that no threads remain on any list.
 
 ### Scheduling ###
 
-`bool_t protothread_run(protothread_t)`
+> `bool_t protothread_run(protothread_t)`
+>
 > Run the next ready thread (if there is one). Returns TRUE if there remains at least one thread ready to run (more work to do).
-
+>
 > **Never call this from an interrupt handler**, even with the `PT_CRITICAL_*` macros defined. Those make the scheduler's *lists* safe against interrupts; nothing can make `protothread_run()` safe, because it runs your thread code. An interrupt arriving while a protothread is running and calling `protothread_run()` would re-enter the scheduler and start a second thread on top of the first. When `PT_DEBUG` is set, the `pt_assert(s->running == NULL)` at the top of `protothread_run()` catches this.
 
-`void protothread_set_ready_function(protothread_t, void (*ready_function)(void *), void *env)`
+> `void protothread_set_ready_function(protothread_t, void (*ready_function)(void *), void *env)`
+>
 > This function lets you use protothreads with an existing scheduler (that you can't or don't want to modify). You don't need this function if you are providing your own scheduler. This function is usually called once during initialization. Its effect is to arrange to have the protothreads system call the given `ready_function` (passing it `env`) when a thread becomes ready (and no threads were ready), and no thread is currently running. You can pass NULL for `ready_function` to disable this feature.
-
+>
 > The given `ready_function` generally schedules (using whatever method is available on your system) another function that calls `protothread_run()` repeatedly until there are no more threads to run (`protothread_run()` returns FALSE). The `ready_function` should not call `protothread_run()` directly.
-
+>
 > If an interrupt handler signals a protothread, `ready_function` is called from that interrupt context. The library calls it outside its own critical section, so interrupts are at whatever level the handler is running at, not masked. Keep it short, and note that the rule above becomes a hard requirement there: scheduling the runner is fine, calling `protothread_run()` is not.
-
+>
 > To prevent a sequence of protothread executions from holding onto the CPU for too long, the function can limit the number of times it calls `protothread_run()`; for example it may run no more than 20 threads before returning to the main scheduler to let other things (outside of protothreads) run. But if it does so (if the last call to `protothread_run()` returns TRUE), it should reschedule itself because there is still work to do.
 
 ### Semaphores ###
 
 `#include "protothread_sem.h"`. A semaphore is an ordinary `unsigned int` that you initialize yourself (to 1 for mutual exclusion). Acquiring one needs a `pt_sem_env_t` context, which lives in your context structure like any other nested function's.
 
-`void pt_sem_acquire(struct context_t *c, pt_sem_env_t *sem_env, unsigned int *value)`
+> `void pt_sem_acquire(struct context_t *c, pt_sem_env_t *sem_env, unsigned int *value)`
+>
 > Wait until the semaphore is non-zero, then decrement it. May block.
 
-`void pt_sem_release(pt_sem_env_t *sem_env, unsigned int *value)`
+> `void pt_sem_release(pt_sem_env_t *sem_env, unsigned int *value)`
+>
 > Increment the semaphore and wake any waiters. Guaranteed not to block.
 
 This implementation is deliberately not fair: a thread can release and immediately reacquire ahead of existing waiters, which costs fewer context switches. If that matters, `pt_yield()` before reacquiring.
@@ -741,19 +761,24 @@ This implementation is deliberately not fair: a thread can release and immediate
 
 `#include "protothread_timer.h"`. The library never reads a clock -- there is no portable one, and depending on one would cost the freestanding property. Instead you drive it from whatever time source you already have: a tick interrupt, a SysTick handler, or the idle loop. A sleep is measured from the most recent `pt_timer_run()`, so the resolution of `pt_sleep()` is your tick period.
 
-`void pt_timers_init(pt_timers_t *timers, pt_time_t now)`
+> `void pt_timers_init(pt_timers_t *timers, pt_time_t now)`
+>
 > Initialize a timer list. There is usually one per clock, and one clock.
 
-`void pt_sleep(struct context_t *c, pt_timer_env_t *timer_env, pt_timers_t *timers, pt_time_t ticks)`
+> `void pt_sleep(struct context_t *c, pt_timer_env_t *timer_env, pt_timers_t *timers, pt_time_t ticks)`
+>
 > Block for `ticks`. Needs a `pt_timer_env_t` in the calling context structure, like any other nested function's context.
 
-`void pt_timer_run(protothread_t, pt_timers_t *timers, pt_time_t now)`
+> `void pt_timer_run(protothread_t, pt_timers_t *timers, pt_time_t now)`
+>
 > Wake every protothread whose deadline has arrived, and record `now` as the base for subsequent sleeps. `now` may jump by more than one tick; everything that became due is woken. Safe to call from an interrupt handler if the `PT_CRITICAL_*` macros are defined.
 
-`bool_t pt_timer_next(pt_timers_t const *timers, pt_time_t *deadline)`
+> `bool_t pt_timer_next(pt_timers_t const *timers, pt_time_t *deadline)`
+>
 > Report the soonest deadline, or FALSE if nothing is sleeping. Use this in an idle loop to decide how long the CPU can be stopped.
 
-`bool_t pt_timer_cancel(pt_timers_t *timers, pt_timer_env_t *timer_env)`
+> `bool_t pt_timer_cancel(pt_timers_t *timers, pt_timer_env_t *timer_env)`
+>
 > Remove a sleeper early; returns TRUE if it was still pending. Call this before `pt_kill()`ing or freeing a protothread that might be sleeping, otherwise the timer list will retain a dangling entry.
 
 The clock type is `PT_TIME_T` (default `uint32_t`), paired with the signed `PT_TIME_DIFF_T` (default `int32_t`). **Counter wraparound is handled correctly**: comparisons use a signed difference rather than a direct `>`, so a 32-bit millisecond clock behaves properly across its 49-day rollover. The one requirement is that no live deadline be more than half the counter range in the future -- about 24 days for that clock.
@@ -776,17 +801,22 @@ for (;;) {
 
 `#include "protothread_lock.h"`. A `pt_lock_t` allows either many concurrent readers or one writer. Each thread needs a `pt_lock_env_t` in its context structure.
 
-`void pt_lock_init(pt_lock_t *lock)`
+> `void pt_lock_init(pt_lock_t *lock)`
+>
 > Initialize the lock. Must be called before use.
 
-`void pt_lock_acquire_read(struct context_t *c, pt_lock_env_t *lock_env, pt_lock_t *lock)`
+> `void pt_lock_acquire_read(struct context_t *c, pt_lock_env_t *lock_env, pt_lock_t *lock)`
+>
 > Acquire the lock for shared (read) access. May block.
 
-`void pt_lock_acquire_write(struct context_t *c, pt_lock_env_t *lock_env, pt_lock_t *lock)`
+> `void pt_lock_acquire_write(struct context_t *c, pt_lock_env_t *lock_env, pt_lock_t *lock)`
+>
 > Acquire the lock for exclusive (write) access. May block.
 
-`void pt_lock_release_read(pt_lock_env_t *lock_env, pt_lock_t *lock)`
-`void pt_lock_release_write(pt_lock_env_t *lock_env, pt_lock_t *lock)`
+> `void pt_lock_release_read(pt_lock_env_t *lock_env, pt_lock_t *lock)`
+>
+> `void pt_lock_release_write(pt_lock_env_t *lock_env, pt_lock_t *lock)`
+>
 > Release the lock. Guaranteed not to block.
 
 Requests are granted in arrival order, so a steady stream of readers cannot starve a waiting writer. Consecutive readers at the head of the queue are all started together.
