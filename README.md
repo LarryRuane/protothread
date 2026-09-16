@@ -579,22 +579,28 @@ Everything else -- `pt_wait`, `pt_yield`, `pt_call`, `pt_create`, `pt_signal`, `
 
 All configuration is by preprocessor macro. Because the library is header-only, define these on the compiler command line (`-DPT_DEBUG=0`) so that every translation unit agrees.
 
-`PT_DEBUG` (default `1`)
+> `PT_DEBUG` (default `1`)
+>
 > Enables internal assertions and the bookkeeping the gdb macros use to print protothread stack traces. Set to `0` for production builds. **This changes the layout of `pt_thread_t` and `pt_func_t`**, so it must be the same for your whole program.
 
-`PT_NWAIT` (default `1024`)
+> `PT_NWAIT` (default `1024`)
+>
 > Number of wait queues, a power of 2. Waiting threads are hashed onto this table by channel address. Each entry is one pointer, so the default costs 8KB per `protothread_t` on a 64-bit machine. **Set `PT_NWAIT=1` on a memory-constrained system**: with only a handful of waiters, one linear wait list is both smaller and faster than hashing.
 
-`PT_NO_MALLOC`
+> `PT_NO_MALLOC`
+>
 > Define this to drop `<stdlib.h>`, `protothread_create()` and `protothread_free()`. Use `protothread_init()` on statically allocated storage instead.
 
-`pt_assert(condition)`
+> `pt_assert(condition)`
+>
 > Define your own before including `protothread.h` to avoid `<assert.h>` entirely. By default it is `assert()` when `PT_DEBUG` is set, and a no-op (that still type-checks the expression) otherwise.
 
-`PT_CRITICAL_T`, `PT_CRITICAL_ENTER()`, `PT_CRITICAL_EXIT(saved)`
+> `PT_CRITICAL_T`, `PT_CRITICAL_ENTER()`, `PT_CRITICAL_EXIT(saved)`
+>
 > Mutual exclusion against interrupt handlers. See [Interrupt safety](#interrupt-safety). No-ops by default.
 
-`PT_CRITICAL_ASSERT()`
+> `PT_CRITICAL_ASSERT()`
+>
 > Checks that the caller really is in a critical section where the scheduler requires it. Compiles to nothing by default. CI defines it against a depth counter, so that a change which starts touching a list from thread context fails loudly instead of silently; you can define it on a real target the same way.
 
 ### Defining the critical-section macros ###
