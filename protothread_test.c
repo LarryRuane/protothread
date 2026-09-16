@@ -834,7 +834,6 @@ test_ready(void)
 typedef struct kill_context_s {
     pt_thread_t pt_thread ;
     pt_func_t pt_func ;
-    bool atexit_ran ;
 } kill_context_t ;
 
 static pt_t
@@ -854,13 +853,6 @@ kill_thr(env_t const env)
 }
 
 static void
-atexit_fn(env_t const env)
-{
-    kill_context_t * const c = env ;
-    c->atexit_ran = true ;
-}
-
-static void
 test_kill(void)
 {
     protothread_t const pt = protothread_create() ;
@@ -875,7 +867,6 @@ test_kill(void)
     more = protothread_run(pt) ;
     check(!more) ;
     check(pt->ready == NULL) ;
-    check(!c[0].atexit_ran) ;
 
     /* Try to kill it one more time, just for giggles. This may not cause any
      * apparent problems, but memory-checker tools like valgrind will flag
@@ -930,14 +921,6 @@ test_kill(void)
     check(pt_kill(&c[0].pt_thread)) ;
     more = protothread_run(pt) ;
     check(!more) ;
-
-    /* Verify atexit behavior
-     */
-    pt_create(pt, &c[0].pt_thread, kill_thr, &c[0]) ;
-    pt_set_atexit(&c[0].pt_thread, atexit_fn) ;
-    check(!c[0].atexit_ran) ;
-    check(pt_kill(&c[0].pt_thread)) ;
-    check(c[0].atexit_ran) ;
 
     free(c) ;
     protothread_free(pt) ;

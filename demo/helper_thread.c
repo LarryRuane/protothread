@@ -32,7 +32,7 @@
  * thread-bound library handle that a stateless pool worker cannot keep. For
  * some synchronous libraries that second point is a requirement rather than
  * an optimization. It costs about 8 kB resident per parked helper against
- * 64 bytes for the protothread itself, which suits tens or hundreds of
+ * 56 bytes for the protothread itself, which suits tens or hundreds of
  * long-lived protothreads and not the tens of thousands this library is
  * otherwise happy to run. (The default 8 MB stack is virtual and lazily
  * committed, so pthread_attr_setstacksize() governs address space, not

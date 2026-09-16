@@ -56,8 +56,11 @@ Two things to fix or document:
    `try`/`catch(...)` that resets it and rethrows, or a small RAII guard --
    and a documented policy for what a throwing protothread means.
 
-Also worth doing for a C++ port: `pt_set_atexit()` is the natural hook for
-running a context's destructor when a protothread is killed.
+Also worth doing for a C++ port: running a context's destructor when a
+protothread is killed. The wrapper is templated on the context type, so the code
+that kills a protothread already knows the type and can call `pt_kill()`, then
+destroy the context -- which is why `pt_set_atexit()` was removed rather than
+kept as a hook for this.
 
 Note that for a *hosted* C++ codebase, C\+\+20 coroutines already provide
 suspendable functions with working locals, RAII and exceptions, at the cost of a
@@ -191,7 +194,8 @@ debugging into a one-line call, and costs nothing in a production build.
     platform, though clang works fine. Make it conditional or drop it.
   * **Killing a sleeping protothread** leaves a dangling entry on the timer list
     unless `pt_timer_cancel()` is called first; same hazard the reader-writer
-    lock has. Documented, but could be handled automatically via `pt_atexit`.
+    lock has. Documented; a generated typed kill (see type-safe top-level
+    protothreads, below) could cancel the timer automatically.
   * **Type-safe top-level protothreads, with no cast in user code.** Nested
     functions need nothing here: `pt_call()` is a direct call, so their context
     parameter can already carry its real type, and the README now teaches that.
@@ -220,10 +224,11 @@ debugging into a one-line call, and costs nothing in a production build.
     purely additive -- `pt_create()` and `env_t` stay -- so it need not wait on a
     major version.
 
-    Two related notes. It could also generate a typed `pt_kill_conn()` that runs
-    the creator's cleanup, which covers much of what `pt_set_atexit()` is for
-    without a pointer in every `pt_thread_t`; a truly generic killer holding only
-    a `pt_thread_t *` would still need erasure. And channels should stay `void *`:
+    Two related notes. It could also generate a typed `pt_kill_conn()` that kills
+    and then runs the creator's cleanup, fully type-checked -- the natural
+    replacement for the removed `pt_set_atexit()`. A truly generic killer holding
+    only a `pt_thread_t *` would still need a registry of its own. And channels
+    should stay `void *`:
     they are identity tokens, never dereferenced, and being able to wait on any
     address is the point.
   * **A lock-free completion queue, and the wakeup it does not solve.** Both

@@ -44,7 +44,6 @@
  *   pt_signal(s, channel)            make the oldest waiter on channel ready
  *   pt_broadcast(s, channel)         make every waiter on channel ready
  *   pt_kill(thread)                  unschedule one; true if it was still scheduled
- *   pt_set_atexit(thread, func)      destructor to run at the end of pt_kill()
  *
  * Types            protothread_t, pt_thread_t, pt_func_t, pt_t, pt_f_t, env_t, bool_t
  * Configuration    PT_DEBUG, PT_NWAIT, PT_NO_MALLOC, PT_CRITICAL_*, pt_assert
@@ -172,7 +171,6 @@ struct pt_thread_s {
     env_t env ;                         /* top level function's context */
     void *channel ;                     /* if waiting (never dereferenced) */
     struct protothread_s * s ;          /* pointer to state */
-    void (*atexit)(env_t env) ;         /* optional user defined destructor */
 #if PT_DEBUG
     struct pt_func_s * pt_func ;        /* top-level function's pt_func_t */
 #endif
@@ -343,7 +341,6 @@ pt_i_create_thread(
     t->env = env ;
     t->s = s ;
     t->channel = NULL ;
-    t->atexit = NULL ;
 #if PT_DEBUG
     t->pt_func = pt_func ;
     t->next = NULL ;
@@ -351,12 +348,6 @@ pt_i_create_thread(
 
     /* add the new thread to the ready list */
     pt_i_add_ready(s, t) ;
-}
-
-/* sets a user defined callback for finalization at the end of pt_kill() */
-static inline void
-pt_set_atexit(pt_thread_t * pt, void (*func)(env_t)) {
-    pt->atexit = func ;
 }
 
 /* should only be called by the macro pt_yield() */
@@ -601,7 +592,7 @@ pt_broadcast(state_t const s, void * const channel)
 
 /* This is used to prevent a thread from scheduling again. This can be
  * very dangerous if the thread in question isn't written to expect this
- * operation.
+ * operation. Any cleanup is the caller's, when this returns true.
  */
 static inline bool_t
 pt_kill(pt_thread_t * const t)
@@ -618,10 +609,6 @@ pt_kill(pt_thread_t * const t)
         killed = pt_i_find_and_unlink(pt_i_get_wait_list(s, t->channel), t) ;
     }
     PT_CRITICAL_EXIT(saved) ;
-
-    if (killed && t->atexit) {
-        t->atexit(t->env) ;
-    }
     return killed ;
 }
 #endif

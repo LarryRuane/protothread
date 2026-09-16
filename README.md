@@ -25,7 +25,7 @@ The cost of nesting and arbitrary blocking is that this implementation uses [gcc
   * **Header-only.** Copy the headers into your project. Nothing to build, nothing to link, no submodules, no dependencies.
   * **Usable from C++.** The headers compile as C++ too, though top-level protothread functions need an explicit cast from `env_t`; see [Using it from C++](#using-it-from-c).
   * **Runs with no C library at all.** A production build needs zero libc symbols and compiles `-ffreestanding`, so it runs on a bare microcontroller with no RTOS underneath it -- where the one thing to know is that it is **not interrupt-safe by default**. See [Bare-metal and embedded use](#bare-metal-and-embedded-use) and [Interrupt safety](#interrupt-safety).
-  * **Tiny, and exactly known.** 32 bytes of RAM per protothread and about 700 bytes of code on a 32-bit microcontroller -- with no per-thread stack to size, so that figure is a number the compiler can tell you rather than a worst-case guess.
+  * **Tiny, and exactly known.** 28 bytes of RAM per protothread and about 700 bytes of code on a 32-bit microcontroller -- with no per-thread stack to size, so that figure is a number the compiler can tell you rather than a worst-case guess.
   * **Deterministic, which makes bugs reproducible.** The schedule is decided by your program rather than the OS, so a seeded pseudo-random test replays exactly and a failure found in hour three of a soak test can be reproduced on demand. This is not free -- every external interface has to be mockable, time included -- but protothreads removes the one source of nondeterminism you cannot reach from inside your own program. See [Deterministic execution](#deterministic-execution).
   * **Fast.** Against POSIX threads doing the same work, measured by the [benchmark](#benchmarks) included in this repository:
 
@@ -33,7 +33,7 @@ The cost of nesting and arbitrary blocking is that this implementation uses [gcc
 |---|---|---|---|
 | context switch | 4.6 ns | 3,335 ns | **720x** |
 | create + destroy | 2.7 ns | 29,259 ns | **10,800x** |
-| memory per thread | 64 bytes | 16,384 bytes | **256x** |
+| memory per thread | 56 bytes | 16,384 bytes | **293x** |
 
 > Protothreads are faster here because they do less: no kernel transition, no scheduler, no stack. POSIX threads buy preemption and real parallelism, which protothreads do not provide -- see [Memory overhead and performance](#memory-overhead-and-performance-benchmarks) for what the comparison does and does not mean, and [Protothreads on a multi-core system](#protothreads-on-a-multi-core-system) for using both together.
   * two synchronization facilities built on top of the base protothreads (semaphores and locks)
@@ -73,7 +73,6 @@ This is all of it. Everything else in the headers is internal and carries a `pt_
 | `pt_signal(s, channel)` | make the oldest waiter on `channel` ready |
 | `pt_broadcast(s, channel)` | make every waiter on `channel` ready |
 | `pt_kill(thread)` | unschedule one; true if it was still scheduled |
-| `pt_set_atexit(thread, func)` | destructor to run at the end of `pt_kill()` |
 
 **Inside a protothread function**, where `c` is the context. All of these are macros.
 
@@ -219,7 +218,7 @@ Only freestanding headers (`<stddef.h>`, `<stdint.h>`, `<stdbool.h>`) are includ
 -DPT_DEBUG=0 -DPT_NO_MALLOC -DPT_NWAIT=1
 ```
 
-and `protothread_init()` on static storage, a program that uses protothreads, semaphores and reader-writer locks compiles under `-ffreestanding` and requires **zero libc symbols** at every optimization level. The scheduler plus one protothread costs about 700 bytes of code and 20 bytes of state, plus 32 bytes per protothread.
+and `protothread_init()` on static storage, a program that uses protothreads, semaphores and reader-writer locks compiles under `-ffreestanding` and requires **zero libc symbols** at every optimization level. The scheduler plus one protothread costs about 700 bytes of code and 20 bytes of state, plus 28 bytes per protothread.
 
 ### Interrupt safety ###
 
@@ -486,7 +485,7 @@ A protothread that makes a blocking system call stops **every** protothread, bec
 
 This is the constraint every event loop has, and it has the same two answers: use non-blocking I/O and `pt_wait()` on readiness ([`demo/async_io.c`](demo/async_io.c)), or hand the call to another thread ([`demo/pool.c`](demo/pool.c) for a standing pool, [`demo/helper_thread.c`](demo/helper_thread.c) for a thread created and joined around the one call).
 
-Handing the call to a thread is really three arrangements, not one. A thread created for the call and joined when it finishes is the cheapest thing that works, and is right when the call blocks, has no asynchronous form, and happens rarely -- no pool, no work queue, no shutdown protocol. A pool is right when the offloaded work is constant and hot, or when there are far more protothreads than you would want threads. Between them sits a dedicated helper thread per protothread, created at startup and parked between calls: it costs about 8 kB of resident memory per parked helper against 64 bytes for the protothread itself, and in exchange no protothread ever queues behind another waiting for a free worker, and each helper can hold state across calls -- a connection, an open descriptor, a thread-bound library handle that a stateless pool worker cannot keep. That last point makes it a requirement, not an optimization, for some synchronous libraries.
+Handing the call to a thread is really three arrangements, not one. A thread created for the call and joined when it finishes is the cheapest thing that works, and is right when the call blocks, has no asynchronous form, and happens rarely -- no pool, no work queue, no shutdown protocol. A pool is right when the offloaded work is constant and hot, or when there are far more protothreads than you would want threads. Between them sits a dedicated helper thread per protothread, created at startup and parked between calls: it costs about 8 kB of resident memory per parked helper against 56 bytes for the protothread itself, and in exchange no protothread ever queues behind another waiting for a free worker, and each helper can hold state across calls -- a connection, an open descriptor, a thread-bound library handle that a stateless pool worker cannot keep. That last point makes it a requirement, not an optimization, for some synchronous libraries.
 
 In all three the protothreads themselves still share one thread, which is what keeps switching between them a computed goto. Giving each protothread a thread to *run on* is the thing that does not work: that is POSIX threads with extra steps.
 
@@ -496,13 +495,13 @@ But it is worth saying plainly that blocking is often *fine*. If the call is rar
 
 The best known implementation of protothreads (by Adam Dunkels) uses just two bytes per protothread. This implementation is not quite so parsimonious, mainly because it includes a scheduler: threads are on either the wait or the run list, and that costs pointers. In exchange you get nesting, wait channels and synchronization primitives.
 
-Each protothread function context has a `pt_func_t` structure, which is 2 pointers. Each overall protothread requires a `pt_thread_t` structure, which is 6 pointers. Measured with `PT_DEBUG=0`:
+Each protothread function context has a `pt_func_t` structure, which is 2 pointers. Each overall protothread requires a `pt_thread_t` structure, which is 5 pointers. Measured with `PT_DEBUG=0`:
 
 | | 32-bit | 64-bit |
 |---|---|---|
 | `pt_func_t` (per nesting level) | 8 | 16 |
-| `pt_thread_t` (per protothread) | 24 | 48 |
-| **minimum RAM per protothread** | **32** | **64** |
+| `pt_thread_t` (per protothread) | 20 | 40 |
+| **minimum RAM per protothread** | **28** | **56** |
 | `protothread_t` state, `PT_NWAIT=1` | 20 | 40 |
 | `protothread_t` state, default `PT_NWAIT` | 4112 | 8224 |
 | `pt_lock_t` | 12 | 16 |
@@ -515,7 +514,7 @@ There is a second saving that the table cannot show: you do not have to guess. S
 
 Protothreads do not abolish that question, but they reduce it from N instances of it to one. There is a single stack, sized once for the deepest `pt_call()` chain plus whatever your interrupt handlers need, with no per-thread safety margin multiplied by the thread count. Everything that has to survive blocking lives in the context structure instead, and the compiler will tell you exactly how big that is with `sizeof`.
 
-Note that `PT_DEBUG` adds four fields to `pt_func_t` and one to `pt_thread_t` for the debugger macros, roughly tripling the per-thread cost. It is on by default; turn it off in production builds.
+Note that `PT_DEBUG` adds four fields to `pt_func_t` and one to `pt_thread_t` for the debugger macros, raising the minimum per-protothread cost from 56 to 96 bytes on a 64-bit target. It is on by default; turn it off in production builds.
 
 ### Benchmarks ###
 
@@ -533,7 +532,7 @@ On the machine this was written on:
 |---|---|---|---|
 | context switch | 4.6 ns | 3,335 ns | **720x** |
 | create + destroy | 2.7 ns | 29,259 ns | **10,800x** |
-| memory per thread | 64 bytes | 16,384 bytes | **256x** |
+| memory per thread | 56 bytes | 16,384 bytes | **293x** |
 
 The context switch benchmark is two threads handing a token back and forth a million times -- `pt_wait`/`pt_signal` on one side, a mutex and one condition variable per thread on the other. Creation is a thread that does nothing, created and reaped. Both are checked for linear scaling across two orders of magnitude, so the compiler is demonstrably not optimizing the work away.
 
@@ -568,7 +567,7 @@ Version 2 is **not** a drop-in replacement. The API you write against is essenti
 
   * **There is no library to link any more.** `protothread_sem.c` and `protothread_lock.c` are gone; their contents moved into the matching headers. The `protothread-static` and `protothread-shared` CMake targets are gone, and pkg-config no longer emits `-lprotothread`. Delete those from your build; include the headers and you are done.
   * **The headers no longer include `<stdlib.h>`, `<string.h>` or `<assert.h>`.** If your code relied on getting `malloc`, `memset` or `assert` transitively from `protothread.h`, include them yourself. This is what buys the freestanding property.
-  * **`pt_set_atexit()` must now be called after `pt_create()`**, which clears the handler. Previously the field was left uninitialized, so calling it beforehand happened to work.
+  * **`pt_set_atexit()` has been removed.** Do any cleanup yourself once `pt_kill()` has found the thread: `if (pt_kill(&c->pt_thread)) cleanup(c);` does exactly what the callback did, and every protothread is a pointer smaller.
   * **Reader-writer locks are now FIFO.** Requests are granted in arrival order, so a stream of readers can no longer starve a waiting writer. If you somehow depended on the old LIFO order, you did not want it.
   * **The license changed from Apache-2.0 to MIT.**
 
@@ -712,15 +711,11 @@ What matters is overlap, not which thread: before the scheduler first runs there
 
 > `bool_t pt_kill(pt_thread_t *)`
 >
-> Remove a thread from whatever list it is on, so that it is never scheduled again. Returns TRUE if the thread was found (it is not an error to kill a thread that has already exited). This is dangerous unless the thread was written to expect it: the thread is stopped wherever it happens to be blocked, and any resources it holds -- allocated contexts, semaphores, locks -- are not released. Do not call this on the currently running thread. If a destructor was installed with `pt_set_atexit()`, it runs after the thread is unlinked.
+> Remove a thread from whatever list it is on, so that it is never scheduled again. Returns TRUE if the thread was found (it is not an error to kill a thread that has already exited). This is dangerous unless the thread was written to expect it: the thread is stopped wherever it happens to be blocked, and any resources it holds -- allocated contexts, semaphores, locks -- are not released. Do not call this on the currently running thread. Any cleanup is up to the caller, once this has returned TRUE.
 
 ### Protothread system setup and teardown ###
 
-None of these schedule or wake a protothread, so none has the lost-wakeup hazard. The four that create and destroy the system itself are called while no protothread is running -- before the first `protothread_run()`, or after the last -- so they may come from a different OS thread than the scheduler's: a setup thread can initialize everything and exit before the scheduler thread starts. They still must not overlap it. Freeing a system that another thread is running is a use-after-free, not a race to be managed.
-
-> `void pt_set_atexit(pt_thread_t *, void (*func)(void *env))`
->
-> Install an optional destructor, called with the thread's top-level environment when `pt_kill()` removes the thread. It is not called when a thread exits normally by returning `PT_DONE`. Call this after `pt_create()`, which clears it.
+None of these schedule or wake a protothread, so none has the lost-wakeup hazard. They are called while no protothread is running -- before the first `protothread_run()`, or after the last -- so they may come from a different OS thread than the scheduler's: a setup thread can initialize everything and exit before the scheduler thread starts. They still must not overlap it. Freeing a system that another thread is running is a use-after-free, not a race to be managed.
 
 > `protothread_t protothread_create(void)`
 >
