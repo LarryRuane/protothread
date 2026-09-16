@@ -170,15 +170,6 @@ for (;;) {
 
 `demo/pool.c` is a complete working program built this way, and `demo/helper_thread.c` uses a self-pipe to the same end. A pleasant side effect: if signals are only ever raised from the scheduler's own context, the lists are never touched concurrently and `PT_CRITICAL_*` is not needed at all.
 
-The usual bare-metal structure is an idle loop:
-
-```c
-for (;;) {
-    while (protothread_run(&state));
-    wait_for_interrupt();
-}
-```
-
 ## Threads without stacks ##
 
 The key concept of any protothreads implementation is that when a function wants to wait for an event to occur (that is, suspend itself and let other threads run), it saves its current location within the function (conceptually its line number or program counter), and returns back to the scheduler or idle loop, releasing use of the stack. The scheduler runs a different thread, handles interrupts or waits for an external event to occur. When the event occurs, the scheduler calls the function in the usual way, and the first thing the function does is `goto` the previously saved location. This location might be within levels of nested loops and `if` statements.
