@@ -655,7 +655,7 @@ error: cannot jump from this indirect goto statement to one of its possible targ
 
 -- because C++ forbids jumping into the scope of a variable with an initializer. That promotes the bug described under [Local variables](#local-variables) from a warning to a hard error. Note what it does *not* do: the silent case, a variable initialized *before* `pt_resume()` and re-initialized on every resume, is still accepted, so declaring those `const` remains the only thing that catches it. `g++` only warns where `clang++` errors, so the same source can build under one and fail under the other.
 
-None of this makes protothreads idiomatic C++ -- there is no RAII, no type-safe context, and for new C++ code C++20 coroutines are the native answer. What the headers offer a C++ project is the same scheduler, usable from C++ translation units, which mostly matters when C++ and C code need to share one protothread scheduler.
+None of this makes protothreads idiomatic C++ -- there is no RAII, no type-safe context, and for new C++ code C\+\+20 coroutines are the native answer. What the headers offer a C++ project is the same scheduler, usable from C++ translation units, which mostly matters when C++ and C code need to share one protothread scheduler.
 
 ## Conclusion ##
 

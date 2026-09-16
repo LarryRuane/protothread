@@ -59,7 +59,7 @@ Two things to fix or document:
 Also worth doing for a C++ port: `pt_set_atexit()` is the natural hook for
 running a context's destructor when a protothread is killed.
 
-Note that for a *hosted* C++ codebase, C++20 coroutines already provide
+Note that for a *hosted* C++ codebase, C\+\+20 coroutines already provide
 suspendable functions with working locals, RAII and exceptions, at the cost of a
 heap-allocated frame. Protothreads win where that frame is unaffordable. The
 port is most valuable for C++ on microcontrollers, which is where the memory
@@ -181,7 +181,7 @@ debugging into a one-line call, and costs nothing in a production build.
     `memcmp` even in freestanding mode, which is why that property has to be
     tested rather than assumed. The CI freestanding job loops `-O0` through
     `-Os`, so it would catch a regression -- the `-O0` in that list is
-    load-bearing. (Relatedly: C has no default member initializers, the C++11
+    load-bearing. (Relatedly: C has no default member initializers, the C\+\+11
     feature that would let the defaults live in the struct declaration itself.
     C23's `= {}` still initializes an object, not a type.)
   * **`pt_mutex_t`.** A semaphore of 1 or the write half of the reader-writer
