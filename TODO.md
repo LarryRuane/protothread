@@ -19,11 +19,9 @@ Investigated; it is closer than expected. With `g++ 15 -std=c++17 -Wall -Wextra`
 
 Two things to fix or document:
 
-1. **One real blocker.** `protothread_create()` does
-   `state_t const s = malloc(sizeof(*s))`, and C++ has no implicit conversion
-   from `void *`. A cast fixes it for both languages:
-   `state_t const s = (state_t)malloc(sizeof(*s))`.
-   Everything else builds clean, and `PT_NO_MALLOC` sidesteps it entirely.
+1. ~~**One real blocker.**~~ Done. `protothread_create()` assigned `malloc()`'s
+   `void *` to a typed pointer, which C++ will not convert implicitly; it now
+   casts, and CI builds and runs a protothread as C++.
 
 2. **One silent trap, and it needs a loud warning in the README.** The existing C
    rule -- a protothread function cannot keep state in a local across a wait --
@@ -208,7 +206,7 @@ debugging into a one-line call, and costs nothing in a production build.
     and a typed creator:
 
         PT_DEFINE_THREAD(conn, conn_ctx_t, conn_thr)
-        /* generates pt_create_conn(state_t, conn_ctx_t *), and a static
+        /* generates pt_create_conn(protothread_t, conn_ctx_t *), and a static
            trampoline calling pt_t conn_thr(conn_ctx_t * const c) */
 
     User code then never casts, a mismatched `pt_create_conn()` is a compile

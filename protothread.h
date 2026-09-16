@@ -129,7 +129,7 @@ typedef void * env_t ;
 #ifndef PT_CRITICAL_T
 #define PT_CRITICAL_T int
 #endif
-typedef PT_CRITICAL_T pt_critical_t ;
+typedef PT_CRITICAL_T pt_i_critical_t ;
 
 #ifndef PT_CRITICAL_ENTER
 #define PT_CRITICAL_ENTER() 0
@@ -150,13 +150,13 @@ typedef PT_CRITICAL_T pt_critical_t ;
 /* Function return values; hide things a bit so user can't
  * accidentally return a NULL or an integer.
  */
-enum pt_return_e {
-    PT_RETURN_WAIT,
-    PT_RETURN_DONE,
+enum pt_i_return_e {
+    PT_I_RETURN_WAIT,
+    PT_I_RETURN_DONE,
 } ;
 
-typedef struct pt_return_s {
-    enum pt_return_e pt_rv ;
+typedef struct pt_i_return_s {
+    enum pt_i_return_e pt_rv ;
 } pt_t ;
 
 /* pointer to a top-level protothread function
@@ -188,19 +188,18 @@ typedef struct protothread_s {
     pt_thread_t *wait[PT_NWAIT] ;   /* waiting for an event (points to newest) */
 } *protothread_t ;
 
-typedef struct protothread_s *state_t ;
 
 static inline pt_t
 pt_i_return_wait(void) {
     pt_t p ;
-    p.pt_rv = PT_RETURN_WAIT ;
+    p.pt_rv = PT_I_RETURN_WAIT ;
     return p ;
 }
 
 static inline pt_t
 pt_i_return_done(void) {
     pt_t p ;
-    p.pt_rv = PT_RETURN_DONE ;
+    p.pt_rv = PT_I_RETURN_DONE ;
     return p ;
 }
 
@@ -313,9 +312,9 @@ pt_i_find_and_unlink(pt_thread_t ** const head, pt_thread_t * const n)
  * function is called outside, so it may do arbitrary work.
  */
 static inline void
-pt_i_add_ready(state_t const s, pt_thread_t * const t)
+pt_i_add_ready(protothread_t const s, pt_thread_t * const t)
 {
-    const pt_critical_t saved = PT_CRITICAL_ENTER() ;
+    const pt_i_critical_t saved = PT_CRITICAL_ENTER() ;
     const bool_t notify = (s->ready_function && !s->ready && !s->running) ;
     pt_i_link(&s->ready, t) ;
     PT_CRITICAL_EXIT(saved) ;
@@ -329,7 +328,7 @@ pt_i_add_ready(state_t const s, pt_thread_t * const t)
 /* This is called by pt_create(), not by user code directly */
 static inline void
 pt_i_create_thread(
-        state_t const s,
+        protothread_t const s,
         pt_thread_t * const t,
         pt_func_t * const pt_func,
         pt_f_t const func,
@@ -354,14 +353,14 @@ pt_i_create_thread(
 static inline void
 pt_i_enqueue_yield(pt_thread_t * const t)
 {
-    state_t const s = t->s ;
+    protothread_t const s = t->s ;
     pt_assert(s->running == t) ;
     pt_i_add_ready(s, t) ;
 }
 
 /* Return which wait list to use (hash table) */
 static inline pt_thread_t **
-pt_i_get_wait_list(state_t const s, void * chan)
+pt_i_get_wait_list(protothread_t const s, void * chan)
 {
     return &s->wait[((uintptr_t)chan >> 4) & (PT_NWAIT-1)] ;
 }
@@ -370,9 +369,9 @@ pt_i_get_wait_list(state_t const s, void * chan)
 static inline void
 pt_i_enqueue_wait(pt_thread_t * const t, void * const channel)
 {
-    state_t const s = t->s ;
+    protothread_t const s = t->s ;
     pt_thread_t ** const wq = pt_i_get_wait_list(s, channel) ;
-    const pt_critical_t saved = PT_CRITICAL_ENTER() ;
+    const pt_i_critical_t saved = PT_CRITICAL_ENTER() ;
     pt_assert(s->running == t) ;
     t->channel = channel ;
     pt_i_link(wq, t) ;
@@ -457,7 +456,7 @@ pt_i_get_protothread(pt_func_t const * pt_func) {
 #define pt_get_pt(env) pt_i_get_protothread(&(env)->pt_func)
 
 static inline void
-protothread_init(state_t const s)
+protothread_init(protothread_t const s)
 {
     int i ;
     s->ready_function = NULL ;
@@ -470,7 +469,7 @@ protothread_init(state_t const s)
 }
 
 static inline void
-protothread_deinit(state_t const s)
+protothread_deinit(protothread_t const s)
 {
     (void)s ;
     if (PT_DEBUG) {
@@ -489,11 +488,11 @@ protothread_deinit(state_t const s)
 #ifndef PT_NO_MALLOC
 #include <stdlib.h>
 
-static inline state_t
+static inline protothread_t
 protothread_create(void)
 {
     /* the cast is redundant in C, but C++ will not convert void* implicitly */
-    state_t const s = (state_t)malloc(sizeof(*s)) ;
+    protothread_t const s = (protothread_t)malloc(sizeof(*s)) ;
     if (s) {
         protothread_init(s) ;
     }
@@ -501,7 +500,7 @@ protothread_create(void)
 }
 
 static inline void
-protothread_free(state_t const s)
+protothread_free(protothread_t const s)
 {
     protothread_deinit(s) ;
     free(s) ;
@@ -509,9 +508,9 @@ protothread_free(state_t const s)
 #endif /* PT_NO_MALLOC */
 
 static inline bool_t
-protothread_run(state_t const s)
+protothread_run(protothread_t const s)
 {
-    pt_critical_t saved ;
+    pt_i_critical_t saved ;
 
     pt_assert(s->running == NULL) ;
     saved = PT_CRITICAL_ENTER() ;
@@ -540,7 +539,7 @@ protothread_run(state_t const s)
  * must reschedule itself).
  */
 static inline void
-protothread_set_ready_function(state_t const s, void (*f)(env_t), env_t env)
+protothread_set_ready_function(protothread_t const s, void (*f)(env_t), env_t env)
 {
     s->ready_function = f ;
     s->ready_env = env ;
@@ -550,10 +549,10 @@ protothread_set_ready_function(state_t const s, void (*f)(env_t), env_t env)
  * channel (if any) runnable.
  */
 static inline void
-pt_i_wake(state_t const s, void * const channel, bool_t const wake_one)
+pt_i_wake(protothread_t const s, void * const channel, bool_t const wake_one)
 {
     pt_thread_t ** const wq = pt_i_get_wait_list(s, channel) ;
-    const pt_critical_t saved = PT_CRITICAL_ENTER() ;
+    const pt_i_critical_t saved = PT_CRITICAL_ENTER() ;
     pt_thread_t * prev = *wq ;  /* one before the oldest waiting thread */
 
     while (*wq) {
@@ -579,13 +578,13 @@ pt_i_wake(state_t const s, void * const channel, bool_t const wake_one)
 }
 
 static inline void
-pt_signal(state_t const s, void * const channel)
+pt_signal(protothread_t const s, void * const channel)
 {
     pt_i_wake(s, channel, true) ;
 }
 
 static inline void
-pt_broadcast(state_t const s, void * const channel)
+pt_broadcast(protothread_t const s, void * const channel)
 {
     pt_i_wake(s, channel, false) ;
 }
@@ -597,8 +596,8 @@ pt_broadcast(state_t const s, void * const channel)
 static inline bool_t
 pt_kill(pt_thread_t * const t)
 {
-    state_t const s = t->s ;
-    pt_critical_t saved ;
+    protothread_t const s = t->s ;
+    pt_i_critical_t saved ;
     bool_t killed ;
 
     pt_assert(s->running != t) ;

@@ -22,16 +22,16 @@
  */
 
 typedef enum {
-    PT_LOCK_READ,
-    PT_LOCK_WRITE,
-    PT_LOCK_READING,
-    PT_LOCK_WRITING,
-} pt_lock_state_t ;
+    PT_I_LOCK_READ,
+    PT_I_LOCK_WRITE,
+    PT_I_LOCK_READING,
+    PT_I_LOCK_WRITING,
+} pt_i_lock_state_t ;
 
 /* per-thread */
 typedef struct pt_lock_env_s {
     pt_func_t pt_func ;
-    pt_lock_state_t state ;
+    pt_i_lock_state_t state ;
     struct pt_lock_env_s *next ;
 } pt_lock_env_t ;
 
@@ -99,30 +99,30 @@ pt_i_lock_update(pt_lock_t *lock)
     }
 
     switch (w->state) {
-    case PT_LOCK_READ:
+    case PT_I_LOCK_READ:
         if (lock->nwriters) {
             pt_assert(lock->nwriters == 1) ;
             return ;
         }
         /* start the first and every consecutive additional reader */
-        while ((w = pt_i_lock_oldest(lock)) != NULL && w->state == PT_LOCK_READ) {
+        while ((w = pt_i_lock_oldest(lock)) != NULL && w->state == PT_I_LOCK_READ) {
             lock->nreaders ++ ;
             pt_i_lock_dequeue(lock) ;
-            w->state = PT_LOCK_READING ;
+            w->state = PT_I_LOCK_READING ;
             pt_broadcast(pt_get_pt(w), w) ;
         }
         break ;
-    case PT_LOCK_WRITE:
+    case PT_I_LOCK_WRITE:
         if (lock->nreaders || lock->nwriters) {
             break ;
         }
         lock->nwriters ++ ;
         pt_i_lock_dequeue(lock) ;
-        w->state = PT_LOCK_WRITING ;
+        w->state = PT_I_LOCK_WRITING ;
         pt_broadcast(pt_get_pt(w), w) ;
         break ;
-    case PT_LOCK_READING:
-    case PT_LOCK_WRITING:
+    case PT_I_LOCK_READING:
+    case PT_I_LOCK_WRITING:
         /* this request is already active! */
         pt_assert(0) ;
         break ;
@@ -133,13 +133,13 @@ static inline pt_t
 pt_i_lock_acquire_read(pt_lock_env_t *c, pt_lock_t *lock)
 {
     pt_resume(c) ;
-    c->state = PT_LOCK_READ ;
+    c->state = PT_I_LOCK_READ ;
     pt_i_lock_enqueue(lock, c) ;
     pt_i_lock_update(lock) ;
-    while (c->state == PT_LOCK_READ) {
+    while (c->state == PT_I_LOCK_READ) {
         pt_wait(c, c) ;
     }
-    pt_assert(c->state == PT_LOCK_READING) ;
+    pt_assert(c->state == PT_I_LOCK_READING) ;
     return PT_DONE ;
 }
 #define pt_lock_acquire_read(c, lock_env, lock) \
@@ -149,13 +149,13 @@ static inline pt_t
 pt_i_lock_acquire_write(pt_lock_env_t *c, pt_lock_t *lock)
 {
     pt_resume(c) ;
-    c->state = PT_LOCK_WRITE ;
+    c->state = PT_I_LOCK_WRITE ;
     pt_i_lock_enqueue(lock, c) ;
     pt_i_lock_update(lock) ;
-    while (c->state == PT_LOCK_WRITE) {
+    while (c->state == PT_I_LOCK_WRITE) {
         pt_wait(c, c) ;
     }
-    pt_assert(c->state == PT_LOCK_WRITING) ;
+    pt_assert(c->state == PT_I_LOCK_WRITING) ;
     return PT_DONE ;
 }
 #define pt_lock_acquire_write(c, lock_env, lock)\
@@ -166,7 +166,7 @@ static inline void
 pt_lock_release_read(pt_lock_env_t *c, pt_lock_t *lock)
 {
     (void)c ;   /* only referenced by pt_assert() */
-    pt_assert(c->state == PT_LOCK_READING) ;
+    pt_assert(c->state == PT_I_LOCK_READING) ;
     pt_assert(!lock->nwriters) ;
     pt_assert(lock->nreaders) ;
     lock->nreaders -- ;
@@ -177,7 +177,7 @@ static inline void
 pt_lock_release_write(pt_lock_env_t *c, pt_lock_t *lock)
 {
     (void)c ;   /* only referenced by pt_assert() */
-    pt_assert(c->state == PT_LOCK_WRITING) ;
+    pt_assert(c->state == PT_I_LOCK_WRITING) ;
     pt_assert(!lock->nreaders) ;
     pt_assert(lock->nwriters == 1) ;
     lock->nwriters -- ;

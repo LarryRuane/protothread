@@ -142,7 +142,7 @@ pool_thr(env_t const env)
  * thread, and only between protothread runs, which is what makes it safe.
  */
 static int
-drain_completions(state_t const s)
+drain_completions(protothread_t const s)
 {
     job_t * batch[NJOBS] ;
     int n = 0 ;

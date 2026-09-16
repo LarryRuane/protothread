@@ -54,11 +54,14 @@ essentially unchanged, but the packaging is not; see
   or `assert` transitively from `protothread.h` must include `<stdlib.h>`,
   `<string.h>` or `<assert.h>` itself.
 - Internal names now carry a `pt_i_` or `PT_I_` prefix, so that any name without
-  one is public API. Several were visible in the 1.x header and are renamed:
+  one is public API. Several were visible in the 1.x headers and are renamed:
   `pt_wake()`, `pt_get_protothread()`, `pt_create_thread()`, `pt_add_ready()`,
-  `pt_link()`, `pt_unlink()` and the other scheduler internals, `PT_WAIT`, and
+  `pt_link()`, `pt_unlink()` and the other scheduler internals; `PT_WAIT`,
+  `PT_RETURN_WAIT` and `PT_RETURN_DONE`; the lock's `PT_LOCK_READ`,
+  `PT_LOCK_WRITE`, `PT_LOCK_READING` and `PT_LOCK_WRITING`; and
   `pt_sem_acquire_f()`, `pt_lock_acquire_read_f()` and
-  `pt_lock_acquire_write_f()`. Code that uses only the documented API is
+  `pt_lock_acquire_write_f()`. `state_t` is removed in favor of `protothread_t`,
+  which is the same type. Code that uses only the documented API is
   unaffected.
 - The struct tags `_pt_sem_env_t`, `_pt_lock_env_t` and `_pt_lock_t` are now
   `pt_sem_env_s`, `pt_lock_env_s` and `pt_lock_s`, because identifiers beginning
