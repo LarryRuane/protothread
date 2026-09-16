@@ -661,7 +661,7 @@ For many resource-constrained or real-time applications, using protothreads give
 
 ## API Reference ##
 
-### Thread execution context ###
+### Inside a protothread function ###
 
 These are macros (designed to look and act like function calls) whose first argument is a pointer to a user-defined context structure, `c` (assume the context structure's name is `context_t`, but that is up to the user). The type `pt_f_t` is a pointer to a protothread function.
 
@@ -693,7 +693,11 @@ These are macros (designed to look and act like function calls) whose first argu
 >
 > This returns the protothread object handle (`protothread_t`). It is a convenience that allows code in a thread context to call API functions that require a protothread object argument, such as `pt_create()` or `pt_signal()`.
 
-### Either thread or non-thread execution context ###
+### Creating, waking and killing ###
+
+Call these from the OS thread that runs `protothread_run()` -- inside a protothread, or in the scheduler loop between runs. From another OS thread or an interrupt handler they race with the scheduler: its lists can be corrupted unless the `PT_CRITICAL_*` macros are defined, and even then `pt_signal()` and `pt_broadcast()` can lose a wakeup, and `pt_kill()` cannot know whether its target is running at that moment. See [Interrupt safety](#interrupt-safety) and [Lost wakeups](#lost-wakeups).
+
+What matters is overlap, not which thread: before the scheduler first runs there is nothing to race with, so a setup thread may create protothreads and then hand over.
 
 > `void pt_create(protothread_t, pt_thread_t *, pt_f_t func, void *env)`
 >
@@ -710,6 +714,10 @@ These are macros (designed to look and act like function calls) whose first argu
 > `bool_t pt_kill(pt_thread_t *)`
 >
 > Remove a thread from whatever list it is on, so that it is never scheduled again. Returns TRUE if the thread was found (it is not an error to kill a thread that has already exited). This is dangerous unless the thread was written to expect it: the thread is stopped wherever it happens to be blocked, and any resources it holds -- allocated contexts, semaphores, locks -- are not released. Do not call this on the currently running thread. If a destructor was installed with `pt_set_atexit()`, it runs after the thread is unlinked.
+
+### Lifecycle ###
+
+None of these schedule or wake a protothread, so none has the lost-wakeup hazard. The four that create and destroy the system itself are called while no protothread is running -- before the first `protothread_run()`, or after the last -- so they may come from a different OS thread than the scheduler's: a setup thread can initialize everything and exit before the scheduler thread starts. They still must not overlap it. Freeing a system that another thread is running is a use-after-free, not a race to be managed.
 
 > `void pt_set_atexit(pt_thread_t *, void (*func)(void *env))`
 >
