@@ -192,6 +192,40 @@ debugging into a one-line call, and costs nothing in a production build.
   * **Killing a sleeping protothread** leaves a dangling entry on the timer list
     unless `pt_timer_cancel()` is called first; same hazard the reader-writer
     lock has. Documented, but could be handled automatically via `pt_atexit`.
+  * **Type-safe top-level protothreads, with no cast in user code.** Nested
+    functions need nothing here: `pt_call()` is a direct call, so their context
+    parameter can already carry its real type, and the README now teaches that.
+    The unavoidable erasure is at the top level, where the scheduler stores every
+    protothread's function in one list and calls `t->func(t->env)`.
+
+    The fix is the generic-header technique Mark Hayden used at LeftHand for hash
+    tables: have the preprocessor stamp out code per type. Here that means one
+    macro per context type generating a trampoline, which does the single cast,
+    and a typed creator:
+
+        PT_DEFINE_THREAD(conn, conn_ctx_t, conn_thr)
+        /* generates pt_create_conn(state_t, conn_ctx_t *), and a static
+           trampoline calling pt_t conn_thr(conn_ctx_t * const c) */
+
+    User code then never casts, a mismatched `pt_create_conn()` is a compile
+    error, and top-level functions need no cast under C++ either. For two tiny
+    generated functions a single macro, `sys/tree.h`-style, beats Hayden's
+    define/include/undef form, which earns its keep when the generated body is
+    large enough to want real source lines and a debugger that can step it.
+
+    Measure before adopting. gcc says outright that a protothread function "can
+    never be inlined because it contains a computed goto", so the trampoline is
+    a genuine extra call on every resume. Probably around a nanosecond, but this
+    library leads with a 4.6 ns context switch, so benchmark it first. It is
+    purely additive -- `pt_create()` and `env_t` stay -- so it need not wait on a
+    major version.
+
+    Two related notes. It could also generate a typed `pt_kill_conn()` that runs
+    the creator's cleanup, which covers much of what `pt_set_atexit()` is for
+    without a pointer in every `pt_thread_t`; a truly generic killer holding only
+    a `pt_thread_t *` would still need erasure. And channels should stay `void *`:
+    they are identity tokens, never dereferenced, and being able to wait on any
+    address is the point.
   * **A lock-free completion queue, and the wakeup it does not solve.** Both
     `demo/pool.c` and `demo/helper_thread.c` carry finished work from another
     thread back to the scheduler, one through a mutex-protected array and the
