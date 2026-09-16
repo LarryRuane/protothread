@@ -50,9 +50,11 @@ essentially unchanged, but the packaging is not; see
 - **Header-only.** The contents of `protothread_sem.c` and `protothread_lock.c`
   moved into the matching headers, so there is nothing to compile or link.
 - **Freestanding.** The headers include only `<stddef.h>`, `<stdint.h>` and
-  `<stdbool.h>` unconditionally. Code that relied on getting `malloc`, `memset`
-  or `assert` transitively from `protothread.h` must include `<stdlib.h>`,
-  `<string.h>` or `<assert.h>` itself.
+  `<stdbool.h>` unconditionally. `<string.h>` is no longer included at all,
+  `<assert.h>` only while `PT_DEBUG` is on, and `<stdlib.h>` only unless
+  `PT_NO_MALLOC` is defined, so code that got `memset`, `assert` or `malloc`
+  transitively must include them itself. Code relying on `assert` can build
+  with the default `PT_DEBUG` and fail with `PT_DEBUG=0`.
 - Internal names now carry a `pt_i_` or `PT_I_` prefix, so that any name without
   one is public API. Several were visible in the 1.x headers and are renamed:
   `pt_wake()`, `pt_get_protothread()`, `pt_create_thread()`, `pt_add_ready()`,
