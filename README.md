@@ -693,7 +693,7 @@ These are macros (designed to look and act like function calls) whose first argu
 >
 > This returns the protothread object handle (`protothread_t`). It is a convenience that allows code in a thread context to call API functions that require a protothread object argument, such as `pt_create()` or `pt_signal()`.
 
-### Creating, waking and killing ###
+### Creating, waking and killing protothreads ###
 
 Call these from the OS thread that runs `protothread_run()` -- inside a protothread, or in the scheduler loop between runs. From another OS thread or an interrupt handler they race with the scheduler: its lists can be corrupted unless the `PT_CRITICAL_*` macros are defined, and even then `pt_signal()` and `pt_broadcast()` can lose a wakeup, and `pt_kill()` cannot know whether its target is running at that moment. See [Interrupt safety](#interrupt-safety) and [Lost wakeups](#lost-wakeups).
 
