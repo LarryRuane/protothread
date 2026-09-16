@@ -15,8 +15,7 @@ I wrote this from scratch, and it is not compatible with other versions of proto
 
   * **Blocking functions can nest.** A protothread function can `pt_call()` another protothread function, which can block, to any depth. The common implementations give you a single flat function per protothread; here a protothread is a genuine call chain, so you can factor blocking code into subroutines the way you would anywhere else.
   * **You can block anywhere**, including inside a `switch` statement. Implementations built on Duff's device cannot, because they have already spent the `switch`.
-  * **A real scheduler, with wait channels.** `pt_wait()`/`pt_signal()`/`pt_broadcast()` on an arbitrary address deliberately mirror condition variables (`pthread_cond_wait()`, except a `pthread_cond_t` variable isn't needed) and the classic Unix kernel `sleep()`/`wakeup()`. Threads live on a run list or a wait list; you are not hand-rolling dispatch.
-  * **Semaphores and reader-writer locks** are built on top of that, so the familiar synchronization vocabulary is available.
+  * **A real scheduler, with wait channels.** `pt_wait()`/`pt_signal()`/`pt_broadcast()` on an arbitrary address deliberately mirror condition variables (`pthread_cond_wait()`, except a `pthread_cond_t` variable isn't needed) and the classic Unix kernel `sleep()`/`wakeup()`. Threads live on a run list or a wait list; you are not hand-rolling dispatch. Semaphores, reader-writer locks and timers are built on top of it, in optional headers of their own.
 
 The cost of nesting and arbitrary blocking is that this implementation uses [gcc label variables](http://gcc.gnu.org/onlinedocs/gcc/Labels-as-Values.html), which is the one part of it that is not standard C, so it requires **gcc or clang** (see [Compiler requirements](#compiler-requirements)). Dunkels' `switch`-based version is portable to any C compiler; this one trades that for a better interface.
 
@@ -36,14 +35,14 @@ The cost of nesting and arbitrary blocking is that this implementation uses [gcc
 | memory per thread | 56 bytes | 16,384 bytes | **293x** |
 
 > Protothreads are faster here because they do less: no kernel transition, no scheduler, no stack. POSIX threads buy preemption and real parallelism, which protothreads do not provide -- see [Memory overhead and performance](#memory-overhead-and-performance-benchmarks) for what the comparison does and does not mean, and [Protothreads on a multi-core system](#protothreads-on-a-multi-core-system) for using both together.
-  * two synchronization facilities built on top of the base protothreads (semaphores and locks)
+  * optional semaphores, reader-writer locks and timers, each in its own header and built entirely on the core
   * about 1000 lines of test code
   * gdb (debugger) macros to print the stack traces of a given protothread or all protothreads.
   * a cmake find script (FindPROTOTHREAD.cmake)
 
 ### Using it ###
 
-There is nothing to build. Copy `protothread.h` (and `protothread_sem.h` and `protothread_lock.h` if you want semaphores or locks) into your project and include them:
+There is nothing to build. Copy `protothread.h` into your project and include it -- that one header is the whole core:
 
 ```c
 #include "protothread.h"
@@ -55,11 +54,11 @@ To build and run the test suite:
 cmake -S . -B build && cmake --build build && ./build/pttest
 ```
 
-### The whole API ###
+### The API ###
 
-This is all of it. Everything else in the headers is internal and carries a `pt_i_` or `PT_I_` prefix to say so, so anything *without* one of those prefixes is API you can rely on, and anything with one may change in any release.
+The core is eighteen entries in the following two tables, all in `protothread.h` -- and the producer/consumer example below uses nine of them. Everything else in `protothread.h` is internal and has a `pt_i_` or `PT_I_` prefix, so anything *without* one of those prefixes is API you can rely on, and anything with one may change in any release.
 
-**The scheduler** (`protothread.h`)
+**The scheduler**
 
 | call | what it does |
 |---|---|
@@ -87,30 +86,15 @@ This is all of it. Everything else in the headers is internal and carries a `pt_
 | `pt_get_pt(c)` | the `protothread_t` this protothread belongs to |
 | `PT_DONE` | what a protothread function returns when it is finished |
 
-**Semaphores** (`protothread_sem.h`) and **reader-writer locks** (`protothread_lock.h`)
+Types: `protothread_t`, `pt_thread_t`, `pt_func_t`, `pt_t`, `pt_f_t`, `env_t`, `bool_t`. The compile-time knobs are under [Configuration](#configuration).
 
-| call | what it does |
-|---|---|
-| `pt_sem_acquire(c, sem_env, value)` | block until the count is non-zero, then take one |
-| `pt_sem_release(sem_env, value)` | give one back; never blocks |
-| `pt_lock_init(lock)` | initialize an unheld lock |
-| `pt_lock_acquire_read(c, lock_env, lock)` | block until read access is granted |
-| `pt_lock_acquire_write(c, lock_env, lock)` | block until exclusive access is granted |
-| `pt_lock_release_read(lock_env, lock)` | release; never blocks |
-| `pt_lock_release_write(lock_env, lock)` | release; never blocks |
+That is everything you need to start. These three headers built on it are entirely optional, but provide commonly-used abstractions:
 
-**Timers** (`protothread_timer.h`). This library never reads a clock; you drive it.
+  * `protothread_sem.h` -- counting semaphores
+  * `protothread_timer.h` -- sleeping, driven by a clock you supply
+  * `protothread_lock.h` -- reader-writer locks
 
-| call | what it does |
-|---|---|
-| `pt_timers_init(timers, now)` | initialize a timer set |
-| `pt_sleep(c, timer_env, timers, ticks)` | block for `ticks` of your own clock |
-| `pt_timer_run(s, timers, now)` | wake everything now due; call this on a tick |
-| `pt_timer_cancel(timers, timer_env)` | wake a sleeper early; true if it was pending |
-| `pt_timer_next(timers, deadline)` | soonest deadline, for an idle loop |
-| `pt_time_after(a, b)` | wraparound-safe time comparison |
-
-Types: `protothread_t`, `pt_thread_t`, `pt_func_t`, `pt_t`, `pt_f_t`, `env_t`, `bool_t`, `pt_sem_env_t`, `pt_lock_t`, `pt_lock_env_t`, `pt_timers_t`, `pt_timer_env_t`, `pt_time_t`. The compile-time knobs are under [Configuration](#configuration).
+Each is ordinary protothread code over `pt_wait()` and `pt_signal()`, as much a demonstration of what the core can express as a facility to use. They are described under [Built on top](#built-on-top-semaphores-timers-and-locks).
 
 ## Threads without stacks ##
 
@@ -750,6 +734,10 @@ None of these schedule or wake a protothread, so none has the lost-wakeup hazard
 > If an interrupt handler signals a protothread, `ready_function` is called from that interrupt context. The library calls it outside its own critical section, so interrupts are at whatever level the handler is running at, not masked. Keep it short, and note that the rule above becomes a hard requirement there: scheduling the runner is fine, calling `protothread_run()` is not.
 >
 > To prevent a sequence of protothread executions from holding onto the CPU for too long, the function can limit the number of times it calls `protothread_run()`; for example it may run no more than 20 threads before returning to the main scheduler to let other things (outside of protothreads) run. But if it does so (if the last call to `protothread_run()` returns TRUE), it should reschedule itself because there is still work to do.
+
+## Built on top: semaphores, timers and locks ##
+
+None of this is needed to use protothreads, and none of it is part of the core. Each header is ordinary protothread code over `pt_wait()` and `pt_signal()`, with no privileged access to the scheduler -- closer in spirit to the programs in [`demo/`](demo) than to the API above, and worth reading as examples of how to build primitives of your own. They are tested and maintained like the rest of the library.
 
 ### Semaphores ###
 
