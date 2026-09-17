@@ -119,7 +119,7 @@ Here is a protothreads version of the famous producer-consumer algorithm with tw
      int * mailbox;
  } pc_thread_context_t;
 ```
-Besides the first two fields, which are used by the protothreads system, the structure contains a counting index, `i`, and a pointer the mailbox that the threads will share. For the producer, the `i` is the next value to write to the mailbox; for the consumer, it's the next value to expect from the mailbox. A value of zero in the mailbox means it is empty.
+Besides the first two fields, which are used by the protothreads system, the structure contains a counting index, `i`, and a pointer to the mailbox that the threads will share. For the producer, the `i` is the next value to write to the mailbox; for the consumer, it's the next value to expect from the mailbox. A value of zero in the mailbox means it is empty.
 
 Here are the producer and consumer threads:
 ```
