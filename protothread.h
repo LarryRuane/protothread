@@ -46,7 +46,7 @@
  *   pt_kill(thread)                  unschedule one; true if it was still scheduled
  *
  * Types            protothread_t, pt_thread_t, pt_func_t, pt_t, pt_f_t, env_t, bool_t
- * Configuration    PT_DEBUG, PT_NWAIT, PT_NO_MALLOC, PT_CRITICAL_*, pt_assert
+ * Configuration    PT_DEBUG, PT_NWAIT, PT_NO_MALLOC, PT_CRITICAL_*, PT_SIGNAL_WAKES_ALL, pt_assert
  * Version          PT_VERSION_{MAJOR,MINOR,PATCH,NUMBER,STRING}, PT_VERSION_AT_LEAST
  * Companions       protothread_sem.h, protothread_lock.h, protothread_timer.h
  */
@@ -145,6 +145,11 @@ typedef PT_CRITICAL_T pt_i_critical_t ;
  */
 #ifndef PT_CRITICAL_ASSERT
 #define PT_CRITICAL_ASSERT() do { } while (0)
+#endif
+
+/* Define as 1 to make pt_signal() wake every waiter; correct code must still work. */
+#ifndef PT_SIGNAL_WAKES_ALL
+#define PT_SIGNAL_WAKES_ALL 0
 #endif
 
 /* Function return values; hide things a bit so user can't
@@ -580,7 +585,7 @@ pt_i_wake(protothread_t const s, void * const channel, bool_t const wake_one)
 static inline void
 pt_signal(protothread_t const s, void * const channel)
 {
-    pt_i_wake(s, channel, true) ;
+    pt_i_wake(s, channel, !PT_SIGNAL_WAKES_ALL) ;
 }
 
 static inline void

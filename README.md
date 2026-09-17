@@ -158,7 +158,7 @@ Here are the producer and consumer threads:
      return PT_DONE;
  }
 ```
-The producer thread waits until the mailbox is empty, then writes the next value to the mailbox and signals the consumer. The consumer thread waits until something appears in the mailbox, verifies that it's the expected value, writes a zero to signify that the mailbox is empty, and wakes up the producer. The threads signal each other using the address of the mailbox as the _channel_. It's common to use the address of the data structure whose state changes are of possible interest to waiting threads as the channel. In its role as a channel, the address is never dereferenced; it is strictly used to match signals with waits.
+The producer thread waits until the mailbox is empty, then writes the next value to the mailbox and signals the consumer. The consumer thread waits until something appears in the mailbox, verifies that it's the expected value, writes a zero to signify that the mailbox is empty, and wakes up the producer. The threads signal each other using the address of the mailbox as the _channel_. It's common to use the address of the data structure whose state changes are of possible interest to waiting threads as the channel. In its role as a channel, the address is never dereferenced; it is strictly used to match signals with waits. The tests are `while` loops rather than `if` statements because a wakeup is only a hint that the condition may have changed; see [Wait channels](#wait-channels).
 
 A channel has no memory: signaling one when no thread is waiting on it has no effect. `pt_broadcast()` is like `pt_signal()` except that it wakes every thread waiting on the channel, not just the longest-waiting one. Where this interface comes from, and why it is used instead of condition variables, is covered under [Wait channels](#wait-channels).
 
@@ -419,6 +419,10 @@ while (!ready) {
 
 You can always reason about the second as the first. That is also why the predicate is re-tested in a `while` and not an `if`: a wakeup means the condition *may* now be true, never that it is, and a wakeup that proves premature costs one extra turn of a loop that was always entitled to iterate.
 
+**Handle stray wakeups as a matter of course.** In the producer/consumer example above, an `if` would happen to be enough: with exactly one producer and one consumer, every wakeup is genuine. Add a second consumer and it breaks at once, because a consumer can be woken to find the other consumer has already emptied the mailbox. The same happens whenever unrelated conditions share a channel -- a structure with two fields that become ready independently, say, signaled on the structure's address -- so always re-test the specific condition you are waiting for.
+
+A good check of a design is to make every `pt_signal()` wake everyone, which defining `PT_SIGNAL_WAKES_ALL` does. Correct code still works, only more slowly; this library's test suite and demos pass that way in CI, and its own semaphores, locks and timers never call `pt_signal()` at all. The reverse does not hold, though: `pt_signal()` is a safe substitute for `pt_broadcast()` only when every waiter on the channel could use the event. When they wait for different conditions, the one wakeup can go to a waiter that rechecks and sleeps again, while the one that could have proceeded is never woken. Use `pt_broadcast()` there, or give each condition its own channel.
+
 The analogy has one limit, and it is worth knowing where. A real spin loop can never miss anything, because it re-tests continuously. `pt_wait()`'s delay ends only when somebody signals, so a lost signal is not a slow wait but a permanent one. That is the entire subject of [Lost wakeups](#lost-wakeups), and it is the one place the busy-wait intuition will mislead you.
 
 ## Deterministic execution ##
@@ -588,6 +592,10 @@ All configuration is by preprocessor macro. Because the library is header-only, 
 > `PT_CRITICAL_ASSERT()`
 >
 > Checks that the caller really is in a critical section where the scheduler requires it. Compiles to nothing by default. CI defines it against a depth counter, so that a change which starts touching a list from thread context fails loudly instead of silently; you can define it on a real target the same way.
+
+> `PT_SIGNAL_WAKES_ALL` (default `0`)
+>
+> Set to `1` to make `pt_signal()` wake every waiter on the channel, exactly as `pt_broadcast()` does. Correct code must still work, since a wakeup is only ever a hint, so this is a test of a design rather than a mode to ship. CI builds the test suite and the demos this way. See [Wait channels](#wait-channels).
 
 ### Defining the critical-section macros ###
 

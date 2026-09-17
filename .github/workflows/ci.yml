@@ -237,6 +237,111 @@ jobs:
           done
           exit $fail
 
+  # A wakeup is a hint, never a promise, so pt_signal() waking only one waiter
+  # must be an optimization that nothing depends on.  Build with every signal
+  # waking everyone and require that the suite and the demos still pass.
+  signal-wakes-all:
+    name: signal wakes all (${{ matrix.cc }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cc: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v5
+      - name: Every pt_signal() wakes every waiter
+        run: |
+          set -euo pipefail
+          # Control first.  With two consumers and a producer on one channel, a
+          # consumer absorbs the wakeup the producer needed, so this stalls when
+          # pt_signal() wakes one waiter and completes when it wakes all of them.
+          # If the macro ever stops having that effect, everything below would
+          # pass without testing anything.
+          cat > control.c <<'EOF'
+          #include "protothread.h"
+          #define N 100
+          static int produced, consumed, mailbox ;
+          typedef struct { pt_thread_t pt_thread ; pt_func_t pt_func ; } ctx_t ;
+
+          static pt_t
+          producer(env_t const env)
+          {
+              ctx_t * const c = env ;
+              pt_resume(c) ;
+              while (produced < N) {
+                  while (mailbox) {
+                      pt_wait(c, &mailbox) ;
+                  }
+                  mailbox = ++produced ;
+                  pt_signal(pt_get_pt(c), &mailbox) ;
+              }
+              return PT_DONE ;
+          }
+
+          static pt_t
+          consumer(env_t const env)
+          {
+              ctx_t * const c = env ;
+              pt_resume(c) ;
+              for (;;) {
+                  while (mailbox == 0) {
+                      pt_wait(c, &mailbox) ;
+                  }
+                  mailbox = 0 ;
+                  consumed++ ;
+                  pt_signal(pt_get_pt(c), &mailbox) ;
+              }
+              return PT_DONE ;
+          }
+
+          int
+          main(void)
+          {
+              struct protothread_s s ;
+              static ctx_t c[3] ;
+              protothread_init(&s) ;
+              pt_create(&s, &c[0].pt_thread, consumer, &c[0]) ;
+              pt_create(&s, &c[1].pt_thread, consumer, &c[1]) ;
+              pt_create(&s, &c[2].pt_thread, producer, &c[2]) ;
+              while (protothread_run(&s)) { }
+              return consumed != N ;
+          }
+          EOF
+          ${{ matrix.cc }} -O1 -Wall -Wextra -Werror -I. control.c -o wake-one
+          ${{ matrix.cc }} -O1 -Wall -Wextra -Werror -I. -DPT_SIGNAL_WAKES_ALL=1 control.c -o wake-all
+          if ./wake-one ; then
+            echo "FAIL: control completed with wake-one; it should have stalled" >&2
+            exit 1
+          fi
+          if ! ./wake-all ; then
+            echo "FAIL: control stalled with PT_SIGNAL_WAKES_ALL=1; the macro had no effect" >&2
+            exit 1
+          fi
+          echo "control: stalls when waking one, completes when waking all"
+
+          fail=0
+          for cfg in "" "-DPT_DEBUG=0" "-DNDEBUG" "-DPT_NWAIT=1" "-DPT_NWAIT=1 -DPT_DEBUG=0 -DNDEBUG" ; do
+            for opt in -O0 -O2 ; do
+              printf '%-36s %-4s ' "${cfg:-(default)}" "$opt"
+              if ${{ matrix.cc }} $opt $cfg -DPT_SIGNAL_WAKES_ALL=1 -Wall -Wextra -Werror \
+                   protothread_test.c -o pttest 2> err.txt && ./pttest > /dev/null ; then
+                echo PASS
+              else
+                echo FAIL ; sed 's/^/    /' err.txt ; fail=1
+              fi
+            done
+          done
+          for d in pool async_io helper_thread ; do
+            printf '%-41s ' "demo/$d"
+            if ${{ matrix.cc }} -O2 -DPT_SIGNAL_WAKES_ALL=1 -Wall -Wextra -Werror -I. \
+                 demo/$d.c -o "$d" -lpthread 2> err.txt && "./$d" > /dev/null ; then
+              echo PASS
+            else
+              echo FAIL ; sed 's/^/    /' err.txt ; fail=1
+            fi
+          done
+          exit $fail
+
   cplusplus:
     name: C++ (${{ matrix.cxx }} ${{ matrix.std }})
     runs-on: ubuntu-latest
