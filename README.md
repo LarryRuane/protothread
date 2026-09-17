@@ -22,8 +22,8 @@ The cost of nesting and arbitrary blocking is that this implementation uses [gcc
 ### What you get ###
 
   * **Header-only.** Copy the headers into your project. Nothing to build, nothing to link, no submodules, no dependencies.
-  * **Usable from C++.** The headers compile as C++ too, though top-level protothread functions need an explicit cast from `env_t`; see [Using it from C++](#using-it-from-c).
-  * **Runs with no C library at all.** A production build needs zero libc symbols and compiles `-ffreestanding`, so it runs on a bare microcontroller with no RTOS underneath it -- where the one thing to know is that it is **not interrupt-safe by default**. See [Bare-metal and embedded use](#bare-metal-and-embedded-use) and [Interrupt safety](#interrupt-safety).
+  * **Usable from C++.** The headers compile as C++ too; see [Using it from C++](#using-it-from-c).
+  * **Runs with no C library at all.** A production build needs zero libc symbols and compiles `-ffreestanding`, so it runs on a bare microcontroller with no RTOS underneath it. See [Bare-metal and embedded use](#bare-metal-and-embedded-use) and [Interrupt safety](#interrupt-safety).
   * **Tiny, and exactly known.** 28 bytes of RAM per protothread and about 700 bytes of code on a 32-bit microcontroller -- with no per-thread stack to size, so that figure is a number the compiler can tell you rather than a worst-case guess.
   * **Deterministic, which makes bugs reproducible.** The schedule is decided by your program rather than the OS, so a seeded pseudo-random test replays exactly and a failure found in hour three of a soak test can be reproduced on demand. This is not free -- every external interface has to be mockable, time included -- but protothreads removes the one source of nondeterminism you cannot reach from inside your own program. See [Deterministic execution](#deterministic-execution).
   * **Fast.** Against POSIX threads doing the same work, measured by the [benchmark](#benchmarks) included in this repository:
@@ -34,7 +34,7 @@ The cost of nesting and arbitrary blocking is that this implementation uses [gcc
 | create + destroy | 2.7 ns | 29,259 ns | **10,800x** |
 | memory per thread | 56 bytes | 16,384 bytes | **293x** |
 
-> Protothreads are faster here because they do less: no kernel transition, no scheduler, no stack. POSIX threads buy preemption and real parallelism, which protothreads do not provide -- see [Memory overhead and performance](#memory-overhead-and-performance-benchmarks) for what the comparison does and does not mean, and [Protothreads on a multi-core system](#protothreads-on-a-multi-core-system) for using both together.
+Protothreads are faster here because they do less: no kernel transition, no scheduler, no stack, no mutex locking. POSIX threads provide preemption and real parallelism, which protothreads do not. See [Memory overhead and performance](#memory-overhead-and-performance-benchmarks) for a detailed comparison and [Protothreads on a multi-core system](#protothreads-on-a-multi-core-system) for using both together.
   * optional semaphores, reader-writer locks and timers, each in its own header and built entirely on the core
   * about 1000 lines of test code
   * gdb (debugger) macros to print the stack traces of a given protothread or all protothreads.
@@ -492,7 +492,6 @@ Each protothread function context has a `pt_func_t` structure, which is 2 pointe
 | **minimum RAM per protothread** | **28** | **56** |
 | `protothread_t` state, `PT_NWAIT=1` | 20 | 40 |
 | `protothread_t` state, default `PT_NWAIT` | 4112 | 8224 |
-| `pt_lock_t` | 12 | 16 |
 
 Add roughly 8 bytes of real C stack per level of `pt_call()` nesting: a protothread is stackless between waits, but while it is running, a chain of `pt_call()`s is an ordinary chain of C calls.
 
