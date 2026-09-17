@@ -104,6 +104,9 @@ typedef void * env_t ;
 #ifndef PT_NWAIT
 #define PT_NWAIT (1 << 10)
 #endif
+#if (PT_NWAIT) < 1 || ((PT_NWAIT) & ((PT_NWAIT) - 1)) != 0
+#error PT_NWAIT must be a power of two, and at least 1
+#endif
 
 /* Interrupt safety.
  *
