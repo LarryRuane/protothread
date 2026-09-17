@@ -38,7 +38,7 @@ Protothreads are faster here because they do less: no kernel transition, no sche
   * optional semaphores, reader-writer locks and timers, each in its own header and built entirely on the core
   * about 1000 lines of test code
   * gdb (debugger) macros to print the stack traces of a given protothread or all protothreads.
-  * a cmake find script (FindPROTOTHREAD.cmake)
+  * a CMake find module, `FindPROTOTHREAD.cmake`: copy it into another CMake project, and `find_package(PROTOTHREAD)` will locate the installed headers
 
 ### Using it ###
 
