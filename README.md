@@ -110,9 +110,62 @@ This implementation uses a little-known gcc and clang feature that lets you stor
 
 You can think of protothreads as a generalization of event-driven programming. An event-driven work item (request in progress) typically consists of a pointer to a function (or a _state_ variable when using a big `switch` statement instead of individual functions) and a _context_ structure. These encapsulate the current state of the work item. A protothread has not just a function pointer (and context), but also a location _within_ the function. That location encodes a more fine-grained form of state than a simple function address. Actually, a protothread is even more general; if function **A** calls function **B**, **B** calls **C** and **C** blocks, then the thread now has a set of _three_ pointers into the middle of those functions, and there could be multiple possible values of those pointers within each function, thus encoding a lot of state.
 
+## Example - Hello, world ##
+
+Here is a complete program that creates one protothread, prints from it, and exits. The [pthreads](https://en.wikipedia.org/wiki/Pthreads) version of this calls `pthread_create()` and then `pthread_join()`. The operating system automatically runs pthreads. The main function is the default initial thread, so both the main function and the child function run in separate threads. Here, the OS knows nothing about protothreads; our own main function must _run_ protothreads, and the main function itself is not a protothread. So, although protothreads does include a join function (`pt_join()`, allowing one protothread to wait for the completion of another), it's not needed here. Instead, the main function runs the scheduler, which runs any available protothreads, until there's nothing left to run. This example prints a message from the protothread and another from the main function, then exits.
+
+All protothreads functions and types begin with `pt_` or (for "system level" entities) `protothread_`.
+
+Every protothread needs a context structure, and its first two fields are used by the protothreads system:
+```
+ #include <stdio.h>
+ #include "protothread.h"
+
+ typedef struct {
+     pt_thread_t pt_thread;
+     pt_func_t pt_func;
+     char const * message;
+ } hello_context_t;
+```
+The protothread function itself takes its context as a `void *`, and its first statement is always `pt_resume()`:
+```
+ static pt_t
+ hello_thr(void * const env)
+ {
+     hello_context_t * const c = env;
+     pt_resume(c);
+
+     printf("%s\n", c->message);
+     return PT_DONE;
+ }
+```
+And `main()` creates the protothread system, creates the protothread, and runs it:
+```
+ int
+ main(void)
+ {
+     protothread_t const pt = protothread_create();
+     hello_context_t c;
+
+     c.message = "Hello from the protothread!";
+     pt_create(pt, &c.pt_thread, hello_thr, &c);
+
+     /* run protothreads until none is ready to run */
+     while (protothread_run(pt)) {
+     }
+
+     printf("Protothread has finished executing.\n");
+     protothread_free(pt);
+     return 0;
+ }
+```
+In general, `protothread_run()` runs one ready-to-run protothread until it blocks or exits, and returns true if any protothread is still ready to run. The thread context, `c`, is an ordinary local variable, because a protothread doesn't need a stack of its own, only somewhere to keep its state, including its arguments (`message`, in this case). It does have to outlive the protothread, so a local works here but wouldn't if the calling function returned while the protothread was still going.
+
+This protothread never blocks, which makes it a thread in name only. The call to `protothread_run()` calls `hello_thr()`, which prints and returns, causing `protothread_run()` to return false, dropping out of the loop. The next example blocks.
+
 ## Example - Producer / Consumer ##
 
-Here is a protothreads version of the famous producer-consumer algorithm with two threads and a single shared integer mailbox. This is just to show the basic idea; details are explained later. All protothreads functions and types begin with `pt_` or (for "system level" entities) `protothread_`. Each thread needs a context structure:
+Here is the famous producer-consumer algorithm, in its simplest form: the producer generates the integers 1 through 100, and the consumer checks that it receives them in order. They share a mailbox holding a single integer (no queuing), so the producer has to wait when it is full and the consumer has to wait when it is empty. This is still just to show the basic idea; details are explained later. Each of the two protothreads needs a context structure; in this case both can have the same type:
 ```
  typedef struct {
      pt_thread_t pt_thread;
@@ -121,7 +174,7 @@ Here is a protothreads version of the famous producer-consumer algorithm with tw
      int * mailbox;
  } pc_thread_context_t;
 ```
-Besides the first two fields, which are used by the protothreads system, the structure contains a counting index, `i`, and a pointer to the mailbox that the threads will share. For the producer, the `i` is the next value to write to the mailbox; for the consumer, it's the next value to expect from the mailbox. A value of zero in the mailbox means it is empty.
+Besides the two system fields, it holds a counting index, `i`, and a pointer to the shared mailbox. A value of zero in the mailbox means it is empty. For the producer, the `i` is the next value to write to the mailbox; for the consumer, it's the next value to expect from the mailbox. Notice that with pthreads, `i` would be a local variable; here, since it's part of the protothread state, it must be in the context structure. A protothread doesn't have a persistent stack as a pthread does. (Here, we mean persistent across blocking and resuming.) This is why you see `c->i` instead of just `i`.
 
 Here are the producer and consumer threads:
 ```
@@ -160,7 +213,7 @@ Here are the producer and consumer threads:
      return PT_DONE;
  }
 ```
-The producer thread waits until the mailbox is empty, then writes the next value to the mailbox and signals the consumer. The consumer thread waits until something appears in the mailbox, verifies that it's the expected value, writes a zero to signify that the mailbox is empty, and wakes up the producer. The threads signal each other using the address of the mailbox as the _channel_. It's common to use the address of the data structure whose state changes are of possible interest to waiting threads as the channel. In its role as a channel, the address is never dereferenced; it is strictly used to match signals with waits. The tests are `while` loops rather than `if` statements because a wakeup is only a hint that the condition may have changed; see [Wait channels](#wait-channels).
+The producer thread waits until the mailbox is empty, then writes the next value to the mailbox and wakes the consumer. The consumer thread waits until something appears in the mailbox, verifies that it's the expected value, writes a zero to signify that the mailbox is empty, and wakes up the producer. The threads signal each other using the address of the mailbox as the _channel_. It's common to use the address of the data structure whose state changes are of possible interest to waiting threads as the channel. In its role as a channel, the address is never dereferenced; it is strictly used to match signals with waits. The tests are `while` loops rather than `if` statements because a wakeup is only a hint that the condition may have changed; see [Wait channels](#wait-channels).
 
 A channel has no memory: signaling one when no thread is waiting on it has no effect. `pt_broadcast()` wakes every thread waiting on the channel, and is the one to use unless you have a reason not to; `pt_signal()` wakes only the longest-waiting one. Where this interface comes from, and why it is used instead of condition variables, is covered under [Wait channels](#wait-channels).
 
