@@ -30,8 +30,8 @@ The cost of nesting and arbitrary blocking is that this implementation uses [gcc
 
 | | protothread | pthread | ratio |
 |---|---|---|---|
-| context switch | 4.6 ns | 3,335 ns | **720x** |
-| create + destroy | 2.7 ns | 29,259 ns | **10,800x** |
+| context switch | 4.7 ns | 3,241 ns | **690x** |
+| create + destroy | 2.8 ns | 28,852 ns | **10,300x** |
 | memory per thread | 56 bytes | 16,384 bytes | **293x** |
 
 Protothreads are faster here because they do less: no kernel transition, no scheduler, no stack, no mutex locking. POSIX threads provide preemption and real parallelism, which protothreads do not. See [Memory overhead and performance](#memory-overhead-and-performance-benchmarks) for a detailed comparison and [Protothreads on a multi-core system](#protothreads-on-a-multi-core-system) for using both together.
@@ -527,8 +527,8 @@ On the machine this was written on:
 
 | | protothread | pthread | ratio |
 |---|---|---|---|
-| context switch | 4.6 ns | 3,335 ns | **720x** |
-| create + destroy | 2.7 ns | 29,259 ns | **10,800x** |
+| context switch | 4.7 ns | 3,241 ns | **690x** |
+| create + destroy | 2.8 ns | 28,852 ns | **10,300x** |
 | memory per thread | 56 bytes | 16,384 bytes | **293x** |
 
 The context switch benchmark is two threads handing a token back and forth a million times -- `pt_wait`/`pt_signal` on one side, a mutex and one condition variable per thread on the other. Creation is a thread that does nothing, created and reaped. Both are checked for linear scaling across two orders of magnitude, so the compiler is demonstrably not optimizing the work away.
