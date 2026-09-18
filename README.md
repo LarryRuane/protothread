@@ -90,7 +90,13 @@ The core is twenty entries in the following two tables, all in `protothread.h`. 
 
 Types: `protothread_t`, `pt_thread_t`, `pt_func_t`, `pt_t`, `pt_f_t`, `env_t`, `bool_t`. The compile-time knobs are under [Configuration](#configuration).
 
-That is everything you need to start. These three headers built on it are entirely optional, but provide commonly-used abstractions:
+That is everything you need to start.
+
+For contrast, POSIX [`pthread.h`](https://pubs.opengroup.org/onlinepubs/9699919799.orig/basedefs/pthread.h.html) declares 101 functions. That isn't a fair comparison, because pthreads gives you preemption, real parallelism, priorities and synchronization that works between processes, and none of that is on offer here. But most of that count isn't the extra power, it's the configuration the extra power needs. Forty-five of those functions do nothing but manage attribute objects, thirty-five of them `get`/`set` pairs, and another ten are `init` and `destroy` for the synchronization objects themselves. What's left brings its own vocabulary: detach state, scheduling scope and inheritance, cancellation state and type, cleanup handler stacks, thread-specific data keys with destructors, four mutex types, three priority protocols, and process-shared variants of most of it.
+
+Nearly all of that exists because a pthread can be interrupted between any two instructions. A protothread can't. It runs until it blocks, at a line you can point at, so there is no priority to invert, no cancellation point to reason about, and no stack to size. Those functions aren't missing here so much as they have nothing to do.
+
+These three headers built on it are entirely optional, but provide commonly-used abstractions:
 
   * `protothread_sem.h` -- counting semaphores
   * `protothread_timer.h` -- sleeping, driven by a clock you supply
