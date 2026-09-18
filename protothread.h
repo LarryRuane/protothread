@@ -179,6 +179,7 @@ struct pt_thread_s {
     env_t env ;                         /* top level function's context */
     void *channel ;                     /* if waiting (never dereferenced) */
     struct protothread_s * s ;          /* pointer to state */
+    bool_t joinable ;                   /* pt_join() may be called on this */
 #if PT_DEBUG
     struct pt_func_s * pt_func ;        /* top-level function's pt_func_t */
 #endif
@@ -340,7 +341,8 @@ pt_i_create_thread(
         pt_thread_t * const t,
         pt_func_t * const pt_func,
         pt_f_t const func,
-        env_t env
+        env_t env,
+        bool_t const joinable
 ) {
     pt_func->thread = t ;
     pt_func->label = NULL ;
@@ -348,6 +350,7 @@ pt_i_create_thread(
     t->env = env ;
     t->s = s ;
     t->channel = NULL ;
+    t->joinable = joinable ;
 #if PT_DEBUG
     t->pt_func = pt_func ;
     t->next = NULL ;
@@ -451,8 +454,24 @@ pt_i_enqueue_wait(pt_thread_t * const t, void * const channel)
 /* Did the most recent pt_call() block (break context)? */
 #define pt_call_waited(env) ((env)->pt_func.label != NULL)
 
+/* Block until the given protothread has exited or been killed. */
+#define pt_join(env, thr) \
+    do { \
+        pt_assert((thr) != (env)->pt_func.thread) ; \
+        pt_assert((thr)->joinable) ; \
+        while ((thr)->func) { \
+            pt_wait(env, thr) ; \
+        } \
+    } while (0)
+
 #define pt_create(pt, thr, func, env) \
-    pt_i_create_thread(pt, thr, &(env)->pt_func, func, env)
+    pt_i_create_thread(pt, thr, &(env)->pt_func, func, env, false)
+
+/* Like pt_create(), but pt_join() may be used on the thread.  Its context
+ * must stay allocated until it has been joined.
+ */
+#define pt_create_joinable(pt, thr, func, env) \
+    pt_i_create_thread(pt, thr, &(env)->pt_func, func, env, true)
 
 /* This allows protothreads (which might not have an explicit pointer to the
  * protothread object) to call pt_create(), pt_signal() or pt_broadcast().
@@ -515,6 +534,8 @@ protothread_free(protothread_t const s)
 }
 #endif /* PT_NO_MALLOC */
 
+static inline void pt_i_wake(protothread_t const s, void * const channel, bool_t const wake_one) ;
+
 static inline bool_t
 protothread_run(protothread_t const s)
 {
@@ -532,8 +553,18 @@ protothread_run(protothread_t const s)
     PT_CRITICAL_EXIT(saved) ;
 
     /* run the thread */
-    s->running->func(s->running->env) ;
-    s->running = NULL ;
+    {
+        pt_thread_t * const t = s->running ;
+        bool_t const joinable = t->joinable ;
+        pt_t const ret = t->func(t->env) ;
+
+        s->running = NULL ;
+        if (joinable && ret.pt_rv == PT_I_RETURN_DONE) {
+            /* a NULL func marks an exited thread; see pt_join() */
+            t->func = NULL ;
+            pt_i_wake(s, t, false) ;
+        }
+    }
 
     /* return true if there are more threads to run */
     return s->ready != NULL ;
@@ -616,6 +647,11 @@ pt_kill(pt_thread_t * const t)
         killed = pt_i_find_and_unlink(pt_i_get_wait_list(s, t->channel), t) ;
     }
     PT_CRITICAL_EXIT(saved) ;
+
+    if (killed && t->joinable) {
+        t->func = NULL ;
+        pt_i_wake(s, t, false) ;
+    }
     return killed ;
 }
 #endif
