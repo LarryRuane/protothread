@@ -149,12 +149,13 @@ debugging into a one-line call, and costs nothing in a production build.
     the "Wait channels" section of README.md, which also makes the case for the
     interface: it is universal, and it degenerates to a busy-wait loop you can
     always reason about.
-  * **Better wait-list hash.** `((uintptr_t)chan >> 4) & (PT_NWAIT-1)` clusters
-    badly when channels are elements of an array of structures: 1000 contexts of
-    128 bytes reach only 128 of 1024 buckets, with chains 8 long. A multiply-shift
-    on the high bits gives 847 buckets and chains of 2. But this is a *hosted*
-    optimization -- a 64-bit multiply is expensive on an 8- or 16-bit MCU, and at
-    `PT_NWAIT=1` there is no hash at all -- so it should be conditional.
+  * ~~Better wait-list hash~~ -- done, Fibonacci hashing in
+    `pt_i_get_wait_list()`. The old shift clustered badly when channels were
+    elements of an array: 1000 contexts of 128 bytes reached 128 of the 1024
+    buckets, against 916 now. The concern that this was a *hosted* optimization
+    went away once the multiplier was sized to `uintptr_t`, so a 16-bit target
+    does a 16-bit multiply, and at `PT_NWAIT=1` the mask is zero and both gcc
+    and clang drop the multiply entirely.
   * **A payload in `pt_t`.** `pt_t` is already a struct wrapping the return
     enum, so adding an `intptr_t` would let a child protothread return one word
     directly. It would actually work: only the final `PT_DONE` return reaches a

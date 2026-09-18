@@ -63,6 +63,12 @@ essentially unchanged, but the packaging is not; see
   reliably report a violation**: AddressSanitizer elides the check when the
   same address was verified just before the call, so code that breaks this rule
   can run clean.
+- Waiting threads are hashed onto the wait table by multiplying the channel
+  address rather than shifting it. Shifting made the bucket depend on how far
+  apart the channels happened to be, so waiting on each element of an array of
+  1000 contexts reached as few as 64 of the 1024 buckets; it now reaches 916.
+  The multiplier is sized to `uintptr_t`, and at `PT_NWAIT=1` the compiler drops
+  it entirely, so a small target pays nothing.
 - **Header-only.** The contents of `protothread_sem.c` and `protothread_lock.c`
   moved into the matching headers, so there is nothing to compile or link.
 - **Freestanding.** The headers include only `<stddef.h>`, `<stdint.h>` and
