@@ -108,6 +108,22 @@ main(void)
     drain(&s) ;
     expect("join a killed protothread", "1") ;
 
+    /* 5. pt_is_alive() before, during and after */
+    protothread_init(&s) ;
+    pt_create(&s, &w.pt_thread, worker, &w) ;
+    if (!pt_is_alive(&w.pt_thread)) { printf("  alive: FAIL before running\n") ; failures++ ; }
+    protothread_run(&s) ;
+    if (!pt_is_alive(&w.pt_thread)) { printf("  alive: FAIL while blocked\n") ; failures++ ; }
+    drain(&s) ;
+    if (pt_is_alive(&w.pt_thread)) { printf("  alive: FAIL after exit\n") ; failures++ ; }
+    trace_n = 0 ;
+    protothread_init(&s) ;
+    pt_create(&s, &w.pt_thread, blocker, &w) ;
+    drain(&s) ;
+    pt_kill(&w.pt_thread) ;
+    if (pt_is_alive(&w.pt_thread)) { printf("  alive: FAIL after kill\n") ; failures++ ; }
+    printf("  %-40s ok   (created, blocked, exited, killed)\n", "pt_is_alive") ;
+
     printf("  failures=%d\n", failures) ;
     return failures != 0 ;
 }

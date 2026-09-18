@@ -357,6 +357,15 @@ pt_i_create_thread(
     pt_i_add_ready(s, t) ;
 }
 
+/* True until the protothread's top-level function has returned, or it has
+ * been killed.  The thread must have been created.
+ */
+static inline bool_t
+pt_is_alive(pt_thread_t const * const t)
+{
+    return t->func != NULL ;
+}
+
 /* should only be called by the macro pt_yield() */
 static inline void
 pt_i_enqueue_yield(pt_thread_t * const t)
@@ -455,7 +464,7 @@ pt_i_enqueue_wait(pt_thread_t * const t, void * const channel)
 #define pt_join(env, thr) \
     do { \
         pt_assert((thr) != (env)->pt_func.thread) ; \
-        while ((thr)->func) { \
+        while (pt_is_alive(thr)) { \
             pt_wait(env, thr) ; \
         } \
     } while (0)
