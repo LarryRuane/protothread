@@ -120,9 +120,6 @@ Timers are done (`protothread_timer.h`). Remaining, most useful first:
     quietly recovers every 100 ms has buried the same defect. That is an
     argument for building the detector first and the recovery second, and for
     the log line naming the wait site rather than counting sweeps.
-  * **`pt_join()`.** The README says outright that the system cannot tell you
-    when a thread exits. The exiting thread broadcasts on its own
-    `pt_thread_t` address; an "exited" flag avoids losing a late join.
   * **Barrier and countdown latch.** Both tiny; the latch is Go's `WaitGroup`,
     which suits the fan-out/fan-in shape protothreads fall into naturally.
 

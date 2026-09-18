@@ -17,6 +17,13 @@ essentially unchanged, but the packaging is not; see
 
 ### Added
 
+- `pt_join()` and `pt_is_alive()`. `pt_join()` blocks until a protothread has
+  exited or been killed, and returns at once if it already has; several
+  protothreads may join the same one. `pt_is_alive()` answers the same question
+  without blocking, from anywhere. Neither costs any memory: an exited thread is
+  marked by clearing its function pointer. Creating and destroying a protothread
+  costs roughly 15% more than before, since the scheduler now has to notice
+  exits; a context switch is unchanged within measurement noise.
 - `protothread_timer.h`: `pt_sleep()`, `pt_timer_run()`, `pt_timer_next()` and
   `pt_timer_cancel()`. The library never reads a clock; you drive it from a tick
   interrupt or an idle loop, and a 32-bit millisecond clock is handled correctly
@@ -47,6 +54,15 @@ essentially unchanged, but the packaging is not; see
 
 ### Changed
 
+- **A protothread may no longer free the storage holding its own
+  `pt_thread_t`.** The scheduler records that a thread has exited after its
+  function returns, so freeing that storage from inside the thread is now a
+  use-after-free. Free it from whoever owns it, after `pt_join()` or once
+  `pt_is_alive()` is false. Freeing a nested `pt_call()` context from inside
+  that call is unaffected, since no thread lives in it. **Sanitizers do not
+  reliably report a violation**: AddressSanitizer elides the check when the
+  same address was verified just before the call, so code that breaks this rule
+  can run clean.
 - **Header-only.** The contents of `protothread_sem.c` and `protothread_lock.c`
   moved into the matching headers, so there is nothing to compile or link.
 - **Freestanding.** The headers include only `<stddef.h>`, `<stdint.h>` and

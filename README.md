@@ -56,7 +56,7 @@ cmake -S . -B build && cmake --build build && ./build/pttest
 
 ### The API ###
 
-The core is eighteen entries in the following two tables, all in `protothread.h`. The `prothread_` prefix is used for operations on the overall protothread object; the `pt_` prefix is for operations involving specific protothreads. Everything else in `protothread.h` is internal and has a `pt_i_` or `PT_I_` prefix, so anything *without* one of those prefixes is API you can rely on, and anything with one may change in a later release.
+The core is twenty entries in the following two tables, all in `protothread.h`. The `protothread_` prefix is used for operations on the overall protothread object; the `pt_` prefix is for operations involving specific protothreads. Everything else in `protothread.h` is internal and has a `pt_i_` or `PT_I_` prefix, so anything *without* one of those prefixes is API you can rely on, and anything with one may change in a later release.
 
 **The scheduler**
 
@@ -72,6 +72,7 @@ The core is eighteen entries in the following two tables, all in `protothread.h`
 | `pt_broadcast(s, channel)` | make every waiter on `channel` ready; the one to use by default |
 | `pt_signal(s, channel)` | make only the oldest waiter on `channel` ready |
 | `pt_kill(thread)` | unschedule one; true if it was still scheduled |
+| `pt_is_alive(thread)` | has it not yet exited or been killed? never blocks |
 
 **Inside a protothread function**, where `c` is the context. All of these are macros.
 
@@ -82,6 +83,7 @@ The core is eighteen entries in the following two tables, all in `protothread.h`
 | `pt_yield(c)` | let other ready protothreads run, then continue |
 | `pt_call(c, func, child_c, ...)` | call a protothread function that may block |
 | `pt_call_waited(c)` | did that `pt_call()` block? |
+| `pt_join(c, thread)` | block until that protothread has exited |
 | `pt_reset(c)` | forget the resume point; start again from the top |
 | `pt_get_pt(c)` | the `protothread_t` this protothread belongs to |
 | `PT_DONE` | what a protothread function returns when it is finished |
@@ -297,7 +299,7 @@ This structure also contains user-defined state that is specific to that functio
 
 There are only two ways to run a protothread function; a protothread function should never be called directly.
 
-  * Any code (a regular function or a protothread function) can call `pt_create()` to create a new thread. You specify a function address and a context pointer which is passed to the function as its only argument. This call schedules the thread (does not run it directly). A scheduled thread can be cancelled with `pt_kill()`, but only if it was written to expect that. The protothread system does not notify you when a thread exits normally; that's up to you to arrange if you need to know. The `pt_create()` call also requires a unique (to this thread) `pt_thread_t` structure, which can be allocated anywhere, but is typically included within the top-level function's context structure (as in the structure `pc_thread_context_t` above).
+  * Any code (a regular function or a protothread function) can call `pt_create()` to create a new thread. You specify a function address and a context pointer which is passed to the function as its only argument. This call schedules the thread (does not run it directly). A scheduled thread can be cancelled with `pt_kill()`, but only if it was written to expect that. To find out when a thread has finished, `pt_join()` blocks until it has, and `pt_is_alive()` answers without blocking. The `pt_create()` call also requires a unique (to this thread) `pt_thread_t` structure, which can be allocated anywhere, but is typically included within the top-level function's context structure (as in the structure `pc_thread_context_t` above). That structure must outlive the protothread: **a protothread may not free the storage holding its own `pt_thread_t`**, because the scheduler records that the thread has exited after its function returns. Freeing a nested `pt_call()` context is still fine, since no thread lives in it.
   * A protothread function can execute `pt_call()`. This has the same semantics as a normal function call, but you must use `pt_call()` when calling a protothread function. Any number of arguments of any types may be passed to the called function (and the usual compiler type checking applies), but the first argument must be a pointer to a context structure (which contains a `pt_func` member) for the called function to use to hold its state. Because `pt_call()` calls the function directly, that parameter can be declared with its real type -- `read_context_t * const c`, not `env_t` -- and the compiler checks it like any other argument. Only a *top-level* function, the one passed to `pt_create()`, has to take `env_t` and cast it, because the scheduler keeps every protothread's function in one list and cannot know their types. (A nested function called through a `pt_f_t` function pointer needs `env_t` too, for the same reason.)
 
 Any return statements you write must return `PT_DONE`; the return value belongs to the protothreads system, which uses it to propagate blocking up the call chain. That is less of a restriction than it looks, because the caller owns the callee's context structure, which makes a better return channel than a return value would be: it carries any number of values of any types, and unlike a return value it survives blocking. Declare the results alongside the arguments:
@@ -563,6 +565,7 @@ Version 2 is **not** a drop-in replacement. The API you write against is essenti
   * **There is no library to link any more.** `protothread_sem.c` and `protothread_lock.c` are gone; their contents moved into the matching headers. The `protothread-static` and `protothread-shared` CMake targets are gone, and pkg-config no longer emits `-lprotothread`. Delete those from your build; include the headers and you are done.
   * **The headers no longer include `<string.h>`, and include `<assert.h>` and `<stdlib.h>` only conditionally**: `<assert.h>` while `PT_DEBUG` is on, and `<stdlib.h>` unless `PT_NO_MALLOC` is defined. If your code relied on getting `memset`, `assert` or `malloc` transitively from `protothread.h`, include them yourself. Watch for `assert` in particular: code that relies on it can build with the default `PT_DEBUG` and then fail in a production build with `PT_DEBUG=0`. This is what buys the freestanding property.
   * **`pt_set_atexit()` has been removed.** Do any cleanup yourself once `pt_kill()` has found the thread: `if (pt_kill(&c->pt_thread)) cleanup(c);` does exactly what the callback did, and every protothread is a pointer smaller.
+  * **A protothread may no longer free the storage holding its own `pt_thread_t`.** The scheduler records that a thread has exited after its function returns, so freeing that storage from inside the thread is now a use-after-free. Free it from whoever owns it instead, after `pt_join()` or once `pt_is_alive()` is false. Freeing a nested `pt_call()` context from inside that call is unaffected. Note that sanitizers do not reliably catch violations.
   * **Internal names now have a `pt_i_` or `PT_I_` prefix**, so that any name without one is public API. Several were visible in the 1.x headers: `pt_wake()`, `pt_get_protothread()`, `pt_create_thread()` and the other scheduler internals; `PT_WAIT`, `PT_RETURN_WAIT` and `PT_RETURN_DONE`; the lock's `PT_LOCK_READ` family; and the `_f` functions behind `pt_sem_acquire()` and the lock macros. `state_t` is gone; use `protothread_t`, which is the same type. The reserved struct tags `_pt_sem_env_t`, `_pt_lock_env_t` and `_pt_lock_t` are now `pt_sem_env_s`, `pt_lock_env_s` and `pt_lock_s`. Code that uses only the documented API is unaffected.
   * **Reader-writer locks are now FIFO.** Requests are granted in arrival order, so a stream of readers can no longer starve a waiting writer. If you somehow depended on the old LIFO order, you did not want it.
   * **The license changed from Apache-2.0 to MIT.**
@@ -687,6 +690,10 @@ These are macros (designed to look and act like function calls) whose first argu
 >
 > Forget this function's saved resume point, so that the next time it runs it starts from the top rather than from where it last blocked. Useful to restart a protothread function, or to reuse a context structure.
 
+> `void pt_join(struct context_t *c, pt_thread_t *thread)`
+>
+> Block until the given protothread has exited or been killed, returning at once if it already has. Several protothreads may join the same one. The target's `pt_thread_t` must remain allocated until every joiner has returned, which is why a protothread may not free the storage holding its own. Joining yourself is a deadlock, and is caught by an assertion in `PT_DEBUG` builds. Analogous to [POSIX pthread\_join()](http://pubs.opengroup.org/onlinepubs/009695399/functions/pthread_join.html), except that there is no return value to collect: results live in the context, which the joiner already owns.
+
 > `protothread_t pt_get_pt(struct context_t *c)`
 >
 > This returns the protothread object handle (`protothread_t`). It is a convenience that allows code in a thread context to call API functions that require a protothread object argument, such as `pt_create()` or `pt_broadcast()`.
@@ -708,6 +715,10 @@ What matters is overlap, not which thread: before the scheduler first runs there
 > `void pt_signal(protothread_t, void *channel)`
 >
 > Same as `pt_broadcast()` but wakes up only one (the oldest) waiting thread. That is safe only under conditions that are easy to break, so prefer `pt_broadcast()`; see [Wait channels](#wait-channels). Analogous to [POSIX pthread\_cond\_signal()](http://www.opengroup.org/onlinepubs/009695399/functions/pthread_cond_signal.html).
+
+> `bool_t pt_is_alive(pt_thread_t const *)`
+>
+> Returns TRUE from creation until the thread's top-level function has returned or `pt_kill()` has removed it. Never blocks, so it can be called from anywhere, including from outside a protothread. The `pt_thread_t` must still exist.
 
 > `bool_t pt_kill(pt_thread_t *)`
 >

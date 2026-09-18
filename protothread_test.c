@@ -1165,6 +1165,126 @@ test_timer(void)
 
 /******************************************************************************/
 
+/******************************************************************************/
+
+typedef struct join_worker_context_s {
+    pt_thread_t pt_thread ;
+    pt_func_t pt_func ;
+    int i ;
+    bool_t exited ;
+} join_worker_context_t ;
+
+typedef struct join_joiner_context_s {
+    pt_thread_t pt_thread ;
+    pt_func_t pt_func ;
+    join_worker_context_t * target ;
+    bool_t joined ;
+} join_joiner_context_t ;
+
+static int join_channel ;
+
+static pt_t
+join_worker_thr(env_t const env)
+{
+    join_worker_context_t * const c = env ;
+    pt_resume(c) ;
+
+    for (c->i = 0; c->i < 3; c->i++) {
+        pt_yield(c) ;
+    }
+    c->exited = true ;
+    return PT_DONE ;
+}
+
+/* blocks until killed, so a joiner can be released by pt_kill() */
+static pt_t
+join_blocker_thr(env_t const env)
+{
+    join_worker_context_t * const c = env ;
+    pt_resume(c) ;
+
+    pt_wait(c, &join_channel) ;
+    return PT_DONE ;
+}
+
+static pt_t
+join_joiner_thr(env_t const env)
+{
+    join_joiner_context_t * const c = env ;
+    pt_resume(c) ;
+
+    pt_join(c, &c->target->pt_thread) ;
+    check(!pt_is_alive(&c->target->pt_thread)) ;
+    c->joined = true ;
+    return PT_DONE ;
+}
+
+/* bounded, so a join that never returns fails the suite instead of hanging it */
+static void
+join_drain(protothread_t pt)
+{
+    int i ;
+
+    for (i = 0; i < 1000 && protothread_run(pt); i++) {
+    }
+    check(i < 1000) ;
+}
+
+static void
+test_join(void)
+{
+    protothread_t const pt = protothread_create() ;
+    join_worker_context_t w ;
+    join_joiner_context_t j1, j2 ;
+
+    /* the joiner blocks, and is released when the worker exits */
+    memset(&w, 0, sizeof(w)) ; memset(&j1, 0, sizeof(j1)) ;
+    pt_create(pt, &w.pt_thread, join_worker_thr, &w) ;
+    check(pt_is_alive(&w.pt_thread)) ;
+    j1.target = &w ;
+    pt_create(pt, &j1.pt_thread, join_joiner_thr, &j1) ;
+    join_drain(pt) ;
+    check(w.exited) ;
+    check(j1.joined) ;
+    check(!pt_is_alive(&w.pt_thread)) ;
+
+    /* joining one that exited before the joiner even existed */
+    memset(&w, 0, sizeof(w)) ; memset(&j1, 0, sizeof(j1)) ;
+    pt_create(pt, &w.pt_thread, join_worker_thr, &w) ;
+    join_drain(pt) ;
+    check(w.exited) ;
+    j1.target = &w ;
+    pt_create(pt, &j1.pt_thread, join_joiner_thr, &j1) ;
+    join_drain(pt) ;
+    check(j1.joined) ;
+
+    /* two joiners on one target */
+    memset(&w, 0, sizeof(w)) ; memset(&j1, 0, sizeof(j1)) ; memset(&j2, 0, sizeof(j2)) ;
+    pt_create(pt, &w.pt_thread, join_worker_thr, &w) ;
+    j1.target = &w ;
+    j2.target = &w ;
+    pt_create(pt, &j1.pt_thread, join_joiner_thr, &j1) ;
+    pt_create(pt, &j2.pt_thread, join_joiner_thr, &j2) ;
+    join_drain(pt) ;
+    check(j1.joined) ;
+    check(j2.joined) ;
+
+    /* a killed thread releases its joiners too */
+    memset(&w, 0, sizeof(w)) ; memset(&j1, 0, sizeof(j1)) ;
+    pt_create(pt, &w.pt_thread, join_blocker_thr, &w) ;
+    j1.target = &w ;
+    pt_create(pt, &j1.pt_thread, join_joiner_thr, &j1) ;
+    join_drain(pt) ;            /* both are now blocked */
+    check(!j1.joined) ;
+    check(pt_is_alive(&w.pt_thread)) ;
+    check(pt_kill(&w.pt_thread)) ;
+    check(!pt_is_alive(&w.pt_thread)) ;
+    join_drain(pt) ;
+    check(j1.joined) ;
+
+    protothread_free(pt) ;
+}
+
 static void
 test_version(void)
 {
@@ -1204,6 +1324,7 @@ main()
     test_kill() ;
     test_reset() ;
     test_timer() ;
+    test_join() ;
     test_version() ;
 
     return 0 ;

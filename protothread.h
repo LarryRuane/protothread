@@ -35,6 +35,7 @@
  *   pt_yield(c)                      let other ready protothreads run, then continue
  *   pt_call(c, func, child_c, ...)   call a protothread function that may block
  *   pt_call_waited(c)                did that pt_call() block?
+ *   pt_join(c, thread)               block until that protothread has exited
  *   pt_reset(c)                      forget the resume point; start again from the top
  *   pt_get_pt(c)                     the protothread_t this protothread belongs to
  *   PT_DONE                          the value a protothread function returns when done
@@ -44,6 +45,7 @@
  *   pt_signal(s, channel)            make the oldest waiter on channel ready
  *   pt_broadcast(s, channel)         make every waiter on channel ready
  *   pt_kill(thread)                  unschedule one; true if it was still scheduled
+ *   pt_is_alive(thread)              has it not yet exited or been killed?
  *
  * Types            protothread_t, pt_thread_t, pt_func_t, pt_t, pt_f_t, env_t, bool_t
  * Configuration    PT_DEBUG, PT_NWAIT, PT_NO_MALLOC, PT_CRITICAL_*, PT_SIGNAL_WAKES_ALL, pt_assert
