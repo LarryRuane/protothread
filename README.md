@@ -56,7 +56,7 @@ cmake -S . -B build && cmake --build build && ./build/pttest
 
 ### The API ###
 
-The core is eighteen entries in the following two tables, all in `protothread.h` -- and the producer/consumer example below uses nine of them. Everything else in `protothread.h` is internal and has a `pt_i_` or `PT_I_` prefix, so anything *without* one of those prefixes is API you can rely on, and anything with one may change in any release.
+The core is eighteen entries in the following two tables, all in `protothread.h`. The `prothread_` prefix is used for operations on the overall protothread object; the `pt_` prefix is for operations involving specific protothreads. Everything else in `protothread.h` is internal and has a `pt_i_` or `PT_I_` prefix, so anything *without* one of those prefixes is API you can rely on, and anything with one may change in a later release.
 
 **The scheduler**
 

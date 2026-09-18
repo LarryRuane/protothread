@@ -73,7 +73,7 @@ main(void)
 
     /* 1. the joiner blocks and is released when the worker exits */
     protothread_init(&s) ;
-    pt_create_joinable(&s, &w.pt_thread, worker, &w) ;
+    pt_create(&s, &w.pt_thread, worker, &w) ;
     j1.target = &w ; j1.id = '1' ;
     pt_create(&s, &j1.pt_thread, joiner, &j1) ;
     drain(&s) ;
@@ -81,7 +81,7 @@ main(void)
 
     /* 2. the worker has already exited before the join is even created */
     protothread_init(&s) ;
-    pt_create_joinable(&s, &w.pt_thread, worker, &w) ;
+    pt_create(&s, &w.pt_thread, worker, &w) ;
     drain(&s) ;
     j1.target = &w ; j1.id = '1' ;
     pt_create(&s, &j1.pt_thread, joiner, &j1) ;
@@ -90,7 +90,7 @@ main(void)
 
     /* 3. two joiners on one target */
     protothread_init(&s) ;
-    pt_create_joinable(&s, &w.pt_thread, worker, &w) ;
+    pt_create(&s, &w.pt_thread, worker, &w) ;
     j1.target = &w ; j1.id = '1' ;
     j2.target = &w ; j2.id = '2' ;
     pt_create(&s, &j1.pt_thread, joiner, &j1) ;
@@ -100,7 +100,7 @@ main(void)
 
     /* 4. the target is killed rather than exiting */
     protothread_init(&s) ;
-    pt_create_joinable(&s, &w.pt_thread, blocker, &w) ;
+    pt_create(&s, &w.pt_thread, blocker, &w) ;
     j1.target = &w ; j1.id = '1' ;
     pt_create(&s, &j1.pt_thread, joiner, &j1) ;
     drain(&s) ;                       /* both block */

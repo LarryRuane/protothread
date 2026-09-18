@@ -415,6 +415,7 @@ test_pc_big(void)
 typedef struct recursive_call_global_context_s {
     bool_t seen[NODES] ;
     int nseen ;
+    struct recursive_call_context_s * all ;   /* every context, freed at the end */
 } recursive_call_global_context_t ;
 
 typedef struct recursive_call_context_s {
@@ -424,6 +425,7 @@ typedef struct recursive_call_context_s {
     pt_thread_t pt_thread ;
     recursive_call_global_context_t * gc ;
     struct recursive_call_context_s * child_c ;
+    struct recursive_call_context_s * next_all ;
 } recursive_call_context_t ;
 
 static pt_t
@@ -441,15 +443,16 @@ recursive_thr(env_t const env)
         gc->seen[c->value] = true ;
         pt_wait(c, &gc->seen[rand() % CHANS]) ;
         gc->nseen ++ ;
-        free(c) ;
         return PT_DONE ;
     }
 
-    /* create the "left" (0) child; it will free this */
+    /* create the "left" (0) child; the test frees it at the end */
     c->child_c = malloc(sizeof(*c->child_c)) ;
     *c->child_c = *c ;
     c->child_c->level ++ ;
     c->child_c->value <<= 1 ;
+    c->child_c->next_all = gc->all ;
+    gc->all = c->child_c ;
     if ((rand() % 4)) {
         /* usually make a synchronous function call */
         pt_call(c, recursive_thr, c->child_c) ;
@@ -459,19 +462,20 @@ recursive_thr(env_t const env)
     }
     pt_wait(c, &gc->seen[rand() % CHANS]) ;
 
-    /* create the "right" (1) child; it will free this */
+    /* create the "right" (1) child; the test frees it at the end */
     c->child_c = malloc(sizeof(*c->child_c)) ;
     *c->child_c = *c ;
     c->child_c->level ++ ;
     c->child_c->value <<= 1 ;
     c->child_c->value ++ ;
+    c->child_c->next_all = gc->all ;
+    gc->all = c->child_c ;
     if ((rand() % 4)) {
         pt_call(c, recursive_thr, c->child_c) ;
     } else {
         pt_create(pt_get_pt(c), &c->child_c->pt_thread, recursive_thr, c->child_c) ;
     }
 
-    free(c) ;
     return PT_DONE ;
 }
 
@@ -487,6 +491,7 @@ test_recursive_once(void)
     memset(top_c, 0, sizeof(*top_c)) ;
 
     top_c->gc = gc ;
+    gc->all = top_c ;
     pt_create(pt, &top_c->pt_thread, recursive_thr, top_c) ;
 
     /* it hasn't run yet at all, make it reach the call */
@@ -501,6 +506,11 @@ test_recursive_once(void)
     }
     for (i = 0; i < NODES; i++) {
         check(gc->seen[i]) ;
+    }
+    while (gc->all) {
+        recursive_call_context_t * const next = gc->all->next_all ;
+        free(gc->all) ;
+        gc->all = next ;
     }
     free(gc) ;
     protothread_free(pt) ;
@@ -553,7 +563,6 @@ sem_thr(env_t const env)
         pt_sem_release(&c->sem_env, &c->gc->sem_value) ;
         pt_yield(c) ;
     }
-    free(c) ;
     return PT_DONE ;
 }
 
@@ -562,6 +571,8 @@ test_sem(void)
 {
     protothread_t const pt = protothread_create() ;
     sem_global_context_t * gc = malloc(sizeof(*gc)) ;
+    sem_context_t * c[100] ;    /* the test frees these; a protothread may not
+                                 * free the context holding its pt_thread_t */
     int i ;
 
     gc->owner = 0 ;     /* invalid ID (no one in critical section) */
@@ -570,15 +581,18 @@ test_sem(void)
     gc->sem_value = 1 ;
 
     for (i = 0; i < 100; i++) {
-        sem_context_t * const c = malloc(sizeof(*c)) ;
-        c->gc = gc ;
-        c->id = i+1 ;
-        pt_create(pt, &c->pt_thread, sem_thr, c) ;
+        c[i] = malloc(sizeof(*c[i])) ;
+        c[i]->gc = gc ;
+        c[i]->id = i+1 ;
+        pt_create(pt, &c[i]->pt_thread, sem_thr, c[i]) ;
     }
 
     /* as long as there is work to do */
     while (protothread_run(pt)) ;
 
+    for (i = 0; i < 100; i++) {
+        free(c[i]) ;
+    }
     free(gc) ;
     protothread_free(pt) ;
 }
