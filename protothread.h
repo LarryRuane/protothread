@@ -16,6 +16,43 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+/* THE PUBLIC API, in full. Internal names all carry a pt_i_ or PT_I_ prefix
+ * and may change in any release; a name without that prefix is one you can
+ * call and rely on.
+ *
+ * The scheduler
+ *   protothread_init(s)              initialize a protothread_t the caller allocated
+ *   protothread_deinit(s)            check nothing is still scheduled (PT_DEBUG only)
+ *   protothread_create()             allocate and initialize one (needs malloc)
+ *   protothread_free(s)              deinitialize and free it
+ *   protothread_run(s)               run one ready protothread; true if more remain
+ *   protothread_set_ready_function(s, f, env)
+ *                                    called when the run list becomes non-empty
+ *
+ * Inside a protothread function; c is the context, and all of these are macros
+ *   pt_resume(c)                     first statement of every protothread function
+ *   pt_wait(c, channel)              block until channel is signalled
+ *   pt_yield(c)                      let other ready protothreads run, then continue
+ *   pt_call(c, func, child_c, ...)   call a protothread function that may block
+ *   pt_call_waited(c)                did that pt_call() block?
+ *   pt_join(c, thread)               block until that protothread has exited
+ *   pt_reset(c)                      forget the resume point; start again from the top
+ *   pt_get_pt(c)                     the protothread_t this protothread belongs to
+ *   PT_DONE                          the value a protothread function returns when done
+ *
+ * Creating, waking and killing
+ *   pt_create(s, thread, func, env)  create a protothread and make it ready
+ *   pt_signal(s, channel)            make the oldest waiter on channel ready
+ *   pt_broadcast(s, channel)         make every waiter on channel ready
+ *   pt_kill(thread)                  unschedule one; true if it was still scheduled
+ *   pt_is_alive(thread)              has it not yet exited or been killed?
+ *
+ * Types            protothread_t, pt_thread_t, pt_func_t, pt_t, pt_f_t, env_t, bool_t
+ * Configuration    PT_DEBUG, PT_NWAIT, PT_NO_MALLOC, PT_CRITICAL_*, PT_SIGNAL_WAKES_ALL, pt_assert
+ * Version          PT_VERSION_{MAJOR,MINOR,PATCH,NUMBER,STRING}, PT_VERSION_AT_LEAST
+ * Companions       protothread_sem.h, protothread_lock.h, protothread_timer.h
+ */
+
 /* Version, semantic versioning (https://semver.org). This is the single
  * source of truth; the build reads it from here. PT_VERSION_NUMBER is
  * ordered, so a vendored copy can be tested at compile time:
@@ -34,12 +71,12 @@
     (PT_VERSION_NUMBER >= ((major) * 10000 + (minor) * 100 + (patch)))
 
 /* derived, so the string can never drift from the numbers */
-#define PT_STRINGIFY_HELP(x) #x
-#define PT_STRINGIFY(x) PT_STRINGIFY_HELP(x)
+#define PT_I_STRINGIFY_HELP(x) #x
+#define PT_I_STRINGIFY(x) PT_I_STRINGIFY_HELP(x)
 #define PT_VERSION_STRING \
-    PT_STRINGIFY(PT_VERSION_MAJOR) "." \
-    PT_STRINGIFY(PT_VERSION_MINOR) "." \
-    PT_STRINGIFY(PT_VERSION_PATCH)
+    PT_I_STRINGIFY(PT_VERSION_MAJOR) "." \
+    PT_I_STRINGIFY(PT_VERSION_MINOR) "." \
+    PT_I_STRINGIFY(PT_VERSION_PATCH)
 
 #ifndef PT_DEBUG
 #define PT_DEBUG 1  /* enabled (else 0) */
@@ -69,6 +106,15 @@ typedef void * env_t ;
 #ifndef PT_NWAIT
 #define PT_NWAIT (1 << 10)
 #endif
+#if (PT_NWAIT) < 1 || ((PT_NWAIT) & ((PT_NWAIT) - 1)) != 0
+#error PT_NWAIT must be a power of two, and at least 1
+#endif
+/* The wait-list index is taken from the top half of a product (see
+ * pt_i_get_wait_list()), so a larger table would leave its upper buckets unused.
+ */
+#if (PT_NWAIT) > 1 && ((PT_NWAIT) - 1) > UINTPTR_MAX / ((PT_NWAIT) - 1)
+#error PT_NWAIT is too large for this pointer width
+#endif
 
 /* Interrupt safety.
  *
@@ -88,13 +134,13 @@ typedef void * env_t ;
  *   #define PT_CRITICAL_ENTER() pt_critical_enter()
  *   #define PT_CRITICAL_EXIT(s) __set_PRIMASK(s)
  *
- * The critical sections are short and O(1), except that pt_wake() and
- * pt_kill() walk one wait list.
+ * The critical sections are short and O(1), except that pt_signal(),
+ * pt_broadcast() and pt_kill() walk one wait list.
  */
 #ifndef PT_CRITICAL_T
 #define PT_CRITICAL_T int
 #endif
-typedef PT_CRITICAL_T pt_critical_t ;
+typedef PT_CRITICAL_T pt_i_critical_t ;
 
 #ifndef PT_CRITICAL_ENTER
 #define PT_CRITICAL_ENTER() 0
@@ -103,16 +149,30 @@ typedef PT_CRITICAL_T pt_critical_t ;
 #define PT_CRITICAL_EXIT(saved) ((void)(saved))
 #endif
 
+/* Several internal functions require the caller to already be in a critical
+ * section. That is a comment and nothing more, since the macros above are
+ * no-ops by default. Define this to check it -- on a target where entering a
+ * critical section is observable, or as CI does, with a depth counter.
+ */
+#ifndef PT_CRITICAL_ASSERT
+#define PT_CRITICAL_ASSERT() do { } while (0)
+#endif
+
+/* Define as 1 to make pt_signal() wake every waiter; correct code must still work. */
+#ifndef PT_SIGNAL_WAKES_ALL
+#define PT_SIGNAL_WAKES_ALL 0
+#endif
+
 /* Function return values; hide things a bit so user can't
  * accidentally return a NULL or an integer.
  */
-enum pt_return_e {
-    PT_RETURN_WAIT,
-    PT_RETURN_DONE,
+enum pt_i_return_e {
+    PT_I_RETURN_WAIT,
+    PT_I_RETURN_DONE,
 } ;
 
-typedef struct pt_return_s {
-    enum pt_return_e pt_rv ;
+typedef struct pt_i_return_s {
+    enum pt_i_return_e pt_rv ;
 } pt_t ;
 
 /* pointer to a top-level protothread function
@@ -127,7 +187,6 @@ struct pt_thread_s {
     env_t env ;                         /* top level function's context */
     void *channel ;                     /* if waiting (never dereferenced) */
     struct protothread_s * s ;          /* pointer to state */
-    void (*atexit)(env_t env) ;         /* optional user defined destructor */
 #if PT_DEBUG
     struct pt_func_s * pt_func ;        /* top-level function's pt_func_t */
 #endif
@@ -145,24 +204,23 @@ typedef struct protothread_s {
     pt_thread_t *wait[PT_NWAIT] ;   /* waiting for an event (points to newest) */
 } *protothread_t ;
 
-typedef struct protothread_s *state_t ;
 
 static inline pt_t
-pt_return_wait(void) {
+pt_i_return_wait(void) {
     pt_t p ;
-    p.pt_rv = PT_RETURN_WAIT ;
+    p.pt_rv = PT_I_RETURN_WAIT ;
     return p ;
 }
 
 static inline pt_t
-pt_return_done(void) {
+pt_i_return_done(void) {
     pt_t p ;
-    p.pt_rv = PT_RETURN_DONE ;
+    p.pt_rv = PT_I_RETURN_DONE ;
     return p ;
 }
 
-#define PT_WAIT pt_return_wait()
-#define PT_DONE pt_return_done()
+#define PT_I_WAIT pt_i_return_wait()
+#define PT_DONE pt_i_return_done()
 
 
 /* One of these per nested function (call frame); every function environment
@@ -195,11 +253,13 @@ typedef struct pt_func_s {
 /* This can be used to reset a thread or thread function */
 #define pt_reset(c) do { (c)->pt_func.label = NULL ; } while (0)
 
-/* link thread as the newest in the given (ready or wait) list */
+/* Link thread as the newest in the given (ready or wait) list.
+ * The caller must already be in a critical section.
+ */
 static inline void
-pt_link(pt_thread_t ** const head, pt_thread_t * const n)
+pt_i_link(pt_thread_t ** const head, pt_thread_t * const n)
 {
-    const pt_critical_t saved = PT_CRITICAL_ENTER() ;
+    PT_CRITICAL_ASSERT() ;
     if (*head) {
         n->next = (*head)->next ;
         (*head)->next = n ;
@@ -207,14 +267,15 @@ pt_link(pt_thread_t ** const head, pt_thread_t * const n)
         n->next = n ;
     }
     *head = n ;
-    PT_CRITICAL_EXIT(saved) ;
 }
 
-/* unlink and return the thread following prev, updating head if necessary */
+/* Unlink and return the thread following prev, updating head if necessary.
+ * The caller must already be in a critical section.
+ */
 static inline pt_thread_t *
-pt_unlink(pt_thread_t ** const head, pt_thread_t * const prev)
+pt_i_unlink(pt_thread_t ** const head, pt_thread_t * const prev)
 {
-    const pt_critical_t saved = PT_CRITICAL_ENTER() ;
+    PT_CRITICAL_ASSERT() ;
     pt_thread_t * const next = prev->next ;
     prev->next = next->next ;
     if (next == prev) {
@@ -225,31 +286,31 @@ pt_unlink(pt_thread_t ** const head, pt_thread_t * const prev)
     if (PT_DEBUG) {
         next->next = NULL ;
     }
-    PT_CRITICAL_EXIT(saved) ;
     return next ;
 }
 
-/* unlink and return the oldest (last) thread */
+/* Unlink and return the oldest (last) thread.
+ * The caller must already be in a critical section.
+ */
 static inline pt_thread_t *
-pt_unlink_oldest(pt_thread_t ** const head)
+pt_i_unlink_oldest(pt_thread_t ** const head)
 {
-    return pt_unlink(head, *head) ;
+    return pt_i_unlink(head, *head) ;
 }
 
-/* finds thread <n> in list <head> and unlinks it. Returns TRUE if
- * it was found.
+/* Finds thread <n> in list <head> and unlinks it. Returns TRUE if
+ * it was found. The caller must already be in a critical section.
  */
 static inline bool_t
-pt_find_and_unlink(pt_thread_t ** const head, pt_thread_t * const n)
+pt_i_find_and_unlink(pt_thread_t ** const head, pt_thread_t * const n)
 {
-    const pt_critical_t saved = PT_CRITICAL_ENTER() ;
+    PT_CRITICAL_ASSERT() ;
     pt_thread_t * prev = *head ;
 
     while (*head) {
         pt_thread_t * const t = prev->next ;
         if (n == t) {
-            pt_unlink(head, prev) ;
-            PT_CRITICAL_EXIT(saved) ;
+            pt_i_unlink(head, prev) ;
             return true ;
         }
         /* Advance to next thread */
@@ -259,16 +320,19 @@ pt_find_and_unlink(pt_thread_t ** const head, pt_thread_t * const n)
             break ;
         }
     }
-    PT_CRITICAL_EXIT(saved) ;
     return false ;
 }
 
+/* Unlike the list primitives above, this takes its own critical section:
+ * it is reached both from thread context and from inside one. The ready
+ * function is called outside, so it may do arbitrary work.
+ */
 static inline void
-pt_add_ready(state_t const s, pt_thread_t * const t)
+pt_i_add_ready(protothread_t const s, pt_thread_t * const t)
 {
-    const pt_critical_t saved = PT_CRITICAL_ENTER() ;
+    const pt_i_critical_t saved = PT_CRITICAL_ENTER() ;
     const bool_t notify = (s->ready_function && !s->ready && !s->running) ;
-    pt_link(&s->ready, t) ;
+    pt_i_link(&s->ready, t) ;
     PT_CRITICAL_EXIT(saved) ;
 
     if (notify) {
@@ -279,8 +343,8 @@ pt_add_ready(state_t const s, pt_thread_t * const t)
 
 /* This is called by pt_create(), not by user code directly */
 static inline void
-pt_create_thread(
-        state_t const s,
+pt_i_create_thread(
+        protothread_t const s,
         pt_thread_t * const t,
         pt_func_t * const pt_func,
         pt_f_t const func,
@@ -292,74 +356,95 @@ pt_create_thread(
     t->env = env ;
     t->s = s ;
     t->channel = NULL ;
-    t->atexit = NULL ;
 #if PT_DEBUG
     t->pt_func = pt_func ;
     t->next = NULL ;
 #endif
 
     /* add the new thread to the ready list */
-    pt_add_ready(s, t) ;
+    pt_i_add_ready(s, t) ;
 }
 
-/* sets a user defined callback for finalization at the end of pt_kill() */
-static inline void
-pt_set_atexit(pt_thread_t * pt, void (*func)(env_t)) {
-    pt->atexit = func ;
+/* True until the protothread's top-level function has returned, or it has
+ * been killed.  The thread must have been created.
+ */
+static inline bool_t
+pt_is_alive(pt_thread_t const * const t)
+{
+    return t->func != NULL ;
 }
 
 /* should only be called by the macro pt_yield() */
 static inline void
-pt_enqueue_yield(pt_thread_t * const t)
+pt_i_enqueue_yield(pt_thread_t * const t)
 {
-    state_t const s = t->s ;
+    protothread_t const s = t->s ;
     pt_assert(s->running == t) ;
-    pt_add_ready(s, t) ;
+    pt_i_add_ready(s, t) ;
 }
+
+/* The golden ratio scaled to the pointer width; a small target multiplies small. */
+#if UINTPTR_MAX > 0xffffffffu
+#define PT_I_HASH_MULT ((uintptr_t)0x9e3779b97f4a7c15u)
+#elif UINTPTR_MAX > 0xffffu
+#define PT_I_HASH_MULT ((uintptr_t)0x9e3779b9u)
+#else
+#define PT_I_HASH_MULT ((uintptr_t)0x9e37u)
+#endif
 
 /* Return which wait list to use (hash table) */
 static inline pt_thread_t **
-pt_get_wait_list(state_t const s, void * chan)
+pt_i_get_wait_list(protothread_t const s, void * chan)
 {
-    return &s->wait[((uintptr_t)chan >> 4) & (PT_NWAIT-1)] ;
+    /* Fibonacci hashing (Knuth): multiplying by the golden ratio scaled to the
+     * pointer width spreads the address bits, with the best-mixed ones ending
+     * up in the top half of the product, which is where the index comes from.
+     * Simply shifting instead is much worse, because the bucket then depends on
+     * how far apart the channels happen to be: waiting on each element of an
+     * array of 1000 contexts reaches 64 of the 1024 buckets with a shift of 3,
+     * and 128 with a shift of 4, against 916 here.  At PT_NWAIT 1 the mask is
+     * zero, so gcc and clang drop the multiply entirely.
+     */
+    uintptr_t const h = (uintptr_t)chan * PT_I_HASH_MULT ;
+    return &s->wait[(h >> (sizeof(uintptr_t) * 4)) & (PT_NWAIT-1)] ;
 }
 
 /* should only be called by the macro pt_wait() */
 static inline void
-pt_enqueue_wait(pt_thread_t * const t, void * const channel)
+pt_i_enqueue_wait(pt_thread_t * const t, void * const channel)
 {
-    state_t const s = t->s ;
-    pt_thread_t ** const wq = pt_get_wait_list(s, channel) ;
-    const pt_critical_t saved = PT_CRITICAL_ENTER() ;
+    protothread_t const s = t->s ;
+    pt_thread_t ** const wq = pt_i_get_wait_list(s, channel) ;
+    const pt_i_critical_t saved = PT_CRITICAL_ENTER() ;
     pt_assert(s->running == t) ;
     t->channel = channel ;
-    pt_link(wq, t) ;
+    pt_i_link(wq, t) ;
     PT_CRITICAL_EXIT(saved) ;
 }
 
 /* Construct goto labels using the current line number (so they are unique). */
-#define PT_LABEL_HELP2(line) pt_label_ ## line
-#define PT_LABEL_HELP(line) PT_LABEL_HELP2(line)
-#define PT_LABEL PT_LABEL_HELP(__LINE__)
+#define PT_I_LABEL_HELP2(line) pt_i_label_ ## line
+#define PT_I_LABEL_HELP(line) PT_I_LABEL_HELP2(line)
+#define PT_I_LABEL PT_I_LABEL_HELP(__LINE__)
 
 #if !PT_DEBUG
-#define pt_debug_save(env)
-#define pt_debug_wait(env)
-#define pt_debug_call(env, child_env)
+#define pt_i_debug_save(env)
+#define pt_i_debug_wait(env)
+#define pt_i_debug_call(env, child_env)
 #else
-#define pt_debug_save(env) do { \
+#define pt_i_debug_save(env) do { \
     (env)->pt_func.file = __FILE__ ; \
     (env)->pt_func.line = __LINE__ ; \
     (env)->pt_func.function = __func__ ; \
 } while (0)
 
-#define pt_debug_wait(env) do { \
-    pt_debug_save(env) ; \
+#define pt_i_debug_wait(env) do { \
+    pt_i_debug_save(env) ; \
     (env)->pt_func.next = NULL ; \
 } while (0)
 
-#define pt_debug_call(env, child_env) do { \
-    pt_debug_save(env) ; \
+#define pt_i_debug_call(env, child_env) do { \
+    pt_i_debug_save(env) ; \
     (env)->pt_func.next = &(child_env)->pt_func ; \
 } while (0)
 
@@ -368,21 +453,21 @@ pt_enqueue_wait(pt_thread_t * const t, void * const channel)
 /* Wait for a channel to be signaled */
 #define pt_wait(env, channel) \
     do { \
-        (env)->pt_func.label = &&PT_LABEL ; \
-        pt_enqueue_wait((env)->pt_func.thread, channel) ; \
-        pt_debug_wait(env) ; \
-        return PT_WAIT ; \
-      PT_LABEL: ; \
+        (env)->pt_func.label = &&PT_I_LABEL ; \
+        pt_i_enqueue_wait((env)->pt_func.thread, channel) ; \
+        pt_i_debug_wait(env) ; \
+        return PT_I_WAIT ; \
+      PT_I_LABEL: ; \
     } while (0)
 
 /* Let other ready protothreads run, then resume this thread */
 #define pt_yield(env) \
     do { \
-        (env)->pt_func.label = &&PT_LABEL ; \
-        pt_enqueue_yield((env)->pt_func.thread) ; \
-        pt_debug_wait(env) ; \
-        return PT_WAIT ; \
-      PT_LABEL: ; \
+        (env)->pt_func.label = &&PT_I_LABEL ; \
+        pt_i_enqueue_yield((env)->pt_func.thread) ; \
+        pt_i_debug_wait(env) ; \
+        return PT_I_WAIT ; \
+      PT_I_LABEL: ; \
     } while (0)
 
 /* Call a function (which may wait) */
@@ -391,31 +476,40 @@ pt_enqueue_wait(pt_thread_t * const t, void * const channel)
         (child_env)->pt_func.thread = (env)->pt_func.thread ; \
         (child_env)->pt_func.label = NULL ; \
         (env)->pt_func.label = NULL ; \
-        pt_debug_call(env, child_env) ; \
-      PT_LABEL: \
-        if (child_func(child_env, ##__VA_ARGS__).pt_rv == PT_WAIT.pt_rv) { \
-            (env)->pt_func.label = &&PT_LABEL ; \
-            return PT_WAIT ; \
+        pt_i_debug_call(env, child_env) ; \
+      PT_I_LABEL: \
+        if (child_func(child_env, ##__VA_ARGS__).pt_rv == PT_I_WAIT.pt_rv) { \
+            (env)->pt_func.label = &&PT_I_LABEL ; \
+            return PT_I_WAIT ; \
         } \
     } while (0)
 
 /* Did the most recent pt_call() block (break context)? */
 #define pt_call_waited(env) ((env)->pt_func.label != NULL)
 
+/* Block until the given protothread has exited or been killed. */
+#define pt_join(env, thr) \
+    do { \
+        pt_assert((thr) != (env)->pt_func.thread) ; \
+        while (pt_is_alive(thr)) { \
+            pt_wait(env, thr) ; \
+        } \
+    } while (0)
+
 #define pt_create(pt, thr, func, env) \
-    pt_create_thread(pt, thr, &(env)->pt_func, func, env)
+    pt_i_create_thread(pt, thr, &(env)->pt_func, func, env)
 
 /* This allows protothreads (which might not have an explicit pointer to the
  * protothread object) to call pt_create(), pt_signal() or pt_broadcast().
  */
 static inline protothread_t
-pt_get_protothread(pt_func_t const * pt_func) {
+pt_i_get_protothread(pt_func_t const * pt_func) {
     return pt_func->thread->s ;
 }
-#define pt_get_pt(env) pt_get_protothread(&(env)->pt_func)
+#define pt_get_pt(env) pt_i_get_protothread(&(env)->pt_func)
 
 static inline void
-protothread_init(state_t const s)
+protothread_init(protothread_t const s)
 {
     int i ;
     s->ready_function = NULL ;
@@ -428,7 +522,7 @@ protothread_init(state_t const s)
 }
 
 static inline void
-protothread_deinit(state_t const s)
+protothread_deinit(protothread_t const s)
 {
     (void)s ;
     if (PT_DEBUG) {
@@ -447,10 +541,11 @@ protothread_deinit(state_t const s)
 #ifndef PT_NO_MALLOC
 #include <stdlib.h>
 
-static inline state_t
+static inline protothread_t
 protothread_create(void)
 {
-    state_t const s = malloc(sizeof(*s)) ;
+    /* the cast is redundant in C, but C++ will not convert void* implicitly */
+    protothread_t const s = (protothread_t)malloc(sizeof(*s)) ;
     if (s) {
         protothread_init(s) ;
     }
@@ -458,17 +553,19 @@ protothread_create(void)
 }
 
 static inline void
-protothread_free(state_t const s)
+protothread_free(protothread_t const s)
 {
     protothread_deinit(s) ;
     free(s) ;
 }
 #endif /* PT_NO_MALLOC */
 
+static inline void pt_i_wake(protothread_t const s, void * const channel, bool_t const wake_one) ;
+
 static inline bool_t
-protothread_run(state_t const s)
+protothread_run(protothread_t const s)
 {
-    pt_critical_t saved ;
+    pt_i_critical_t saved ;
 
     pt_assert(s->running == NULL) ;
     saved = PT_CRITICAL_ENTER() ;
@@ -478,12 +575,30 @@ protothread_run(state_t const s)
     }
 
     /* unlink the oldest ready thread */
-    s->running = pt_unlink_oldest(&s->ready) ;
+    s->running = pt_i_unlink_oldest(&s->ready) ;
     PT_CRITICAL_EXIT(saved) ;
 
     /* run the thread */
-    s->running->func(s->running->env) ;
-    s->running = NULL ;
+    {
+        pt_t const ret = s->running->func(s->running->env) ;
+        /* Re-read s->running rather than caching it across the call: the
+         * address then looks fresh to a sanitizer, so a protothread that
+         * frees its own context is reported rather than silently accepted.
+         */
+        pt_thread_t * const t = s->running ;
+
+        s->running = NULL ;
+        if (ret.pt_rv == PT_I_RETURN_DONE) {
+            /* a NULL func marks an exited thread; see pt_join() */
+            t->func = NULL ;
+            /* Nearly always nobody is joining, and only a protothread can add
+             * a waiter, so an empty bucket here cannot fill concurrently.
+             */
+            if (*pt_i_get_wait_list(s, t) != NULL) {
+                pt_i_wake(s, t, false) ;
+            }
+        }
+    }
 
     /* return true if there are more threads to run */
     return s->ready != NULL ;
@@ -497,7 +612,7 @@ protothread_run(state_t const s)
  * must reschedule itself).
  */
 static inline void
-protothread_set_ready_function(state_t const s, void (*f)(env_t), env_t env)
+protothread_set_ready_function(protothread_t const s, void (*f)(env_t), env_t env)
 {
     s->ready_function = f ;
     s->ready_env = env ;
@@ -507,10 +622,10 @@ protothread_set_ready_function(state_t const s, void (*f)(env_t), env_t env)
  * channel (if any) runnable.
  */
 static inline void
-pt_wake(state_t const s, void * const channel, bool_t const wake_one)
+pt_i_wake(protothread_t const s, void * const channel, bool_t const wake_one)
 {
-    pt_thread_t ** const wq = pt_get_wait_list(s, channel) ;
-    const pt_critical_t saved = PT_CRITICAL_ENTER() ;
+    pt_thread_t ** const wq = pt_i_get_wait_list(s, channel) ;
+    const pt_i_critical_t saved = PT_CRITICAL_ENTER() ;
     pt_thread_t * prev = *wq ;  /* one before the oldest waiting thread */
 
     while (*wq) {
@@ -524,8 +639,8 @@ pt_wake(state_t const s, void * const channel, bool_t const wake_one)
             }
         } else {
             /* wake up this thread (link to the ready list) */
-            pt_unlink(wq, prev) ;
-            pt_add_ready(s, t) ;
+            pt_i_unlink(wq, prev) ;
+            pt_i_add_ready(s, t) ;
             if (wake_one) {
                 /* wake only the first found thread */
                 break ;
@@ -536,39 +651,40 @@ pt_wake(state_t const s, void * const channel, bool_t const wake_one)
 }
 
 static inline void
-pt_signal(state_t const s, void * const channel)
+pt_signal(protothread_t const s, void * const channel)
 {
-    pt_wake(s, channel, true) ;
+    pt_i_wake(s, channel, !PT_SIGNAL_WAKES_ALL) ;
 }
 
 static inline void
-pt_broadcast(state_t const s, void * const channel)
+pt_broadcast(protothread_t const s, void * const channel)
 {
-    pt_wake(s, channel, false) ;
+    pt_i_wake(s, channel, false) ;
 }
 
 /* This is used to prevent a thread from scheduling again. This can be
  * very dangerous if the thread in question isn't written to expect this
- * operation.
+ * operation. Any cleanup is the caller's, when this returns true.
  */
 static inline bool_t
 pt_kill(pt_thread_t * const t)
 {
-    state_t const s = t->s ;
-    pt_critical_t saved ;
+    protothread_t const s = t->s ;
+    pt_i_critical_t saved ;
     bool_t killed ;
 
     pt_assert(s->running != t) ;
 
     saved = PT_CRITICAL_ENTER() ;
-    killed = pt_find_and_unlink(&s->ready, t) ;
+    killed = pt_i_find_and_unlink(&s->ready, t) ;
     if (!killed) {
-        killed = pt_find_and_unlink(pt_get_wait_list(s, t->channel), t) ;
+        killed = pt_i_find_and_unlink(pt_i_get_wait_list(s, t->channel), t) ;
     }
     PT_CRITICAL_EXIT(saved) ;
 
-    if (killed && t->atexit) {
-        t->atexit(t->env) ;
+    if (killed) {
+        t->func = NULL ;
+        pt_i_wake(s, t, false) ;
     }
     return killed ;
 }

@@ -11,6 +11,16 @@
 
 #include "protothread.h"
 
+/* Sleeping. The public API; pt_i_ names are internal.
+ *   pt_timers_init(timers, now)                 initialize a timer set
+ *   pt_sleep(c, timer_env, timers, ticks)       block for <ticks> of your clock
+ *   pt_timer_run(s, timers, now)                wake everything now due; call on a tick
+ *   pt_timer_cancel(timers, timer_env)          wake a sleeper early; true if pending
+ *   pt_timer_next(timers, deadline)             soonest deadline, for an idle loop
+ *   pt_time_after(a, b)                         wraparound-safe time comparison
+ *   pt_timers_t, pt_timer_env_t, pt_time_t      the set, one env per sleeper, the clock
+ */
+
 /* Sleeping for a while.
  *
  * This library never reads a clock; there is no portable one, and depending
@@ -35,7 +45,7 @@
 #define PT_TIME_DIFF_T int32_t
 #endif
 typedef PT_TIME_T pt_time_t ;
-typedef PT_TIME_DIFF_T pt_time_diff_t ;
+typedef PT_TIME_DIFF_T pt_i_time_diff_t ;
 
 /* Compare two times, correctly across a counter wraparound. The subtraction
  * wraps, and reading the result as signed recovers the true ordering. This
@@ -45,19 +55,19 @@ typedef PT_TIME_DIFF_T pt_time_diff_t ;
 static inline bool_t
 pt_time_after(pt_time_t a, pt_time_t b)
 {
-    return (pt_time_diff_t)(a - b) > 0 ;
+    return (pt_i_time_diff_t)(a - b) > 0 ;
 }
 
 /* One per sleeping protothread, in its context structure (like pt_func_t) */
-typedef struct _pt_timer_env_t {
+typedef struct pt_timer_env_s {
     pt_func_t pt_func ;
-    struct _pt_timer_env_t *next ;  /* deadline-sorted list, soonest first */
+    struct pt_timer_env_s *next ;  /* deadline-sorted list, soonest first */
     pt_time_t deadline ;
     bool_t expired ;
 } pt_timer_env_t ;
 
 /* One per clock; usually one for the whole system */
-typedef struct _pt_timers_t {
+typedef struct pt_timers_s {
     pt_timer_env_t *head ;          /* soonest deadline, or NULL */
     pt_time_t now ;                 /* time of the last pt_timer_run() */
 } pt_timers_t ;
@@ -71,10 +81,10 @@ pt_timers_init(pt_timers_t *timers, pt_time_t now)
 
 /* insert into the deadline-sorted list, behind any equal deadlines */
 static inline void
-pt_timer_insert(pt_timers_t *timers, pt_timer_env_t *c)
+pt_i_timer_insert(pt_timers_t *timers, pt_timer_env_t *c)
 {
     pt_timer_env_t **pp = &timers->head ;
-    const pt_critical_t saved = PT_CRITICAL_ENTER() ;
+    const pt_i_critical_t saved = PT_CRITICAL_ENTER() ;
 
     while (*pp && !pt_time_after((*pp)->deadline, c->deadline)) {
         pp = &(*pp)->next ;
@@ -92,7 +102,7 @@ pt_timer_cancel(pt_timers_t *timers, pt_timer_env_t *c)
 {
     pt_timer_env_t **pp ;
     bool_t found = false ;
-    const pt_critical_t saved = PT_CRITICAL_ENTER() ;
+    const pt_i_critical_t saved = PT_CRITICAL_ENTER() ;
 
     for (pp = &timers->head; *pp; pp = &(*pp)->next) {
         if (*pp == c) {
@@ -110,12 +120,12 @@ pt_timer_cancel(pt_timers_t *timers, pt_timer_env_t *c)
  * the time changes; <now> need not advance by only one tick.
  */
 static inline void
-pt_timer_run(state_t const s, pt_timers_t *timers, pt_time_t now)
+pt_timer_run(protothread_t const s, pt_timers_t *timers, pt_time_t now)
 {
     timers->now = now ;
     for (;;) {
         pt_timer_env_t *c ;
-        const pt_critical_t saved = PT_CRITICAL_ENTER() ;
+        const pt_i_critical_t saved = PT_CRITICAL_ENTER() ;
 
         c = timers->head ;
         if (c == NULL || pt_time_after(c->deadline, now)) {
@@ -139,7 +149,7 @@ static inline bool_t
 pt_timer_next(pt_timers_t const *timers, pt_time_t *deadline)
 {
     bool_t pending ;
-    const pt_critical_t saved = PT_CRITICAL_ENTER() ;
+    const pt_i_critical_t saved = PT_CRITICAL_ENTER() ;
 
     pending = (timers->head != NULL) ;
     if (pending) {
@@ -150,12 +160,12 @@ pt_timer_next(pt_timers_t const *timers, pt_time_t *deadline)
 }
 
 static inline pt_t
-pt_sleep_f(pt_timer_env_t *c, pt_timers_t *timers, pt_time_t ticks)
+pt_i_sleep(pt_timer_env_t *c, pt_timers_t *timers, pt_time_t ticks)
 {
     pt_resume(c) ;
     c->expired = false ;
     c->deadline = timers->now + ticks ;
-    pt_timer_insert(timers, c) ;
+    pt_i_timer_insert(timers, c) ;
     while (!c->expired) {
         pt_wait(c, c) ;
     }
@@ -164,6 +174,6 @@ pt_sleep_f(pt_timer_env_t *c, pt_timers_t *timers, pt_time_t ticks)
 
 /* Block for <ticks>, measured from the last pt_timer_run() */
 #define pt_sleep(c, timer_env, timers, ticks) \
-    pt_call(c, pt_sleep_f, timer_env, timers, ticks)
+    pt_call(c, pt_i_sleep, timer_env, timers, ticks)
 
 #endif /* PROTOTHREAD_TIMER_H */
