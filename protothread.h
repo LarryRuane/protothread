@@ -404,6 +404,9 @@ pt_i_get_wait_list(protothread_t const s, void * chan)
      * array of 1000 contexts reaches 64 of the 1024 buckets with a shift of 3,
      * and 128 with a shift of 4, against 916 here.  At PT_NWAIT 1 the mask is
      * zero, so gcc and clang drop the multiply entirely.
+     *
+     * Only performance depends on this: any function that always gives the
+     * same bucket for the same chan is correct, even a constant.
      */
     uintptr_t const h = (uintptr_t)chan * PT_I_HASH_MULT ;
     return &s->wait[(h >> (sizeof(uintptr_t) * 4)) & (PT_NWAIT-1)] ;
