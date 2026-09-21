@@ -458,7 +458,7 @@ Another interesting idea is that if **A** calls **B** and after **B** returns **
 
 ### Wait channels ###
 
-`pt_wait()`, `pt_signal()` and `pt_broadcast()` are a condition variable with the `pthread_cond_t` left out. The names are taken straight from POSIX -- `pthread_cond_wait()`, `pthread_cond_signal()`, `pthread_cond_broadcast()` -- so that they read as they do everywhere else, even though there is no condition variable to pass to them. The channel is any address -- by convention the address of the variable whose value you are waiting on -- so there is nothing to declare, allocate, initialize or destroy, and no bookkeeping about which condition variable belongs to which datum. This is the `sleep()`/`wakeup()` interface of the early Unix kernels, which I once made work on a multiprocessor kernel and compared against semaphores in [Process Synchronization in the UTS Kernel](https://static.usenix.org/publications/compsystems/1990/sum_ruane.pdf) (Computing Systems, 1990). Linux arrived at the same shape from the other direction: a `futex` is wait-and-wake on an address, and every pthreads primitive on Linux is built on one.
+`pt_wait()`, `pt_signal()` and `pt_broadcast()` are a condition variable with the `pthread_cond_t` left out. The names are taken straight from POSIX -- `pthread_cond_wait()`, `pthread_cond_signal()`, `pthread_cond_broadcast()` -- so that they read as they do everywhere else, even though there is no condition variable to pass to them. The channel is any address -- by convention the address of the variable whose value you are waiting on -- so there is nothing to declare, allocate, initialize or destroy, and no bookkeeping about which condition variable belongs to which datum. This is the `sleep()`/`wakeup()` interface of the early Unix kernels, which I once made work on a multiprocessor kernel and compared against semaphores in [Process Synchronization in the UTS Kernel](https://static.usenix.org/publications/compsystems/1990/sum_ruane.pdf) (Computing Systems, 1990). Linux adopted this concept from the other direction: a `futex` is wait-and-wake on an address, and every pthreads primitive on Linux is built on one.
 
 There is no associated mutex because the scheduler is non-preemptive. `pthread_cond_wait()` needs one to make "test the predicate" and "suspend" a single indivisible step; between protothreads nothing runs in between, so they already are. That is also exactly why signalling from an interrupt handler or another OS thread is unsafe -- it reopens the gap the mutex exists to close. See [Lost wakeups](#lost-wakeups).
 
@@ -743,7 +743,7 @@ These are macros (designed to look and act like function calls) whose first argu
 
 > `bool_t pt_call_waited(struct context_t *c)`
 >
-> Returns TRUE if the most recent `pt_call()` blocked (either directly in the called function, or in a function that it called, recursively). If function **A** calls **B** and **B** blocks, then when it finally returns to **A**, it's sometimes helpful for **A** to know that other threads might have run, so it should reevaluate the state of the world. But if **B** didn't block, then **A** knows that only a limited change of state (namely, whatever **B** might do) could have occurred.
+> Returns TRUE if the most recent `pt_call()` blocked (either directly in the called function, or in a function that it called, recursively). If function **A** calls **B** and **B** blocks, then when it finally returns to **A**, it's sometimes helpful for **A** to know that other threads might have run, so it should reevaluate the state of the world. But if **B** didn't block, then **A** knows that only a limited change of state (namely, whatever **B** might do) could have occurred. This works after acquiring a semaphore or a lock too, since those are `pt_call()`s; see [Built on top](#built-on-top-semaphores-timers-and-locks) for an example.
 
 > `void pt_reset(struct context_t *c)`
 >
@@ -824,6 +824,18 @@ None of these schedule or wake a protothread, so none has the lost-wakeup hazard
 ## Built on top: semaphores, timers and locks ##
 
 None of this is needed to use protothreads, and none of it is part of the core. Each header is ordinary protothread code over `pt_wait()` and `pt_broadcast()`, with no privileged access to the scheduler -- closer in spirit to the programs in [`demo/`](demo) than to the API above, and worth reading as examples of how to build primitives of your own. They are tested and maintained like the rest of the library.
+
+Every acquire here is a `pt_call()` underneath, so [`pt_call_waited()`](#inside-a-protothread-function) tells you afterwards whether it blocked, and that's worth more than it looks. If it didn't block, no other protothread has run since you asked, so whatever you looked at beforehand is still exactly as you saw it. If it did, anything could have changed while you waited, and you need to check again. That's the usual shape of code that finds something and then locks it:
+
+```c
+c->e = cache_lookup(c->key);
+pt_lock_acquire_write(c, &c->lock_env, &c->e->lock);
+if (pt_call_waited(c) && c->e->key != c->key) {
+    /* reused for another key while we waited; release it and start over */
+}
+```
+
+In the common, uncontended case the lookup is trusted without a second look.
 
 ### Semaphores ###
 
