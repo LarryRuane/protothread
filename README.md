@@ -458,7 +458,7 @@ Another interesting idea is that if **A** calls **B** and after **B** returns **
 
 ### Wait channels ###
 
-`pt_wait()`, `pt_signal()` and `pt_broadcast()` are a condition variable with the `pthread_cond_t` left out. The names are taken straight from POSIX -- `pthread_cond_wait()`, `pthread_cond_signal()`, `pthread_cond_broadcast()` -- so that they read as they do everywhere else, even though there is no condition variable to pass to them. The channel is any address -- by convention the address of the variable whose value you are waiting on -- so there is nothing to declare, allocate, initialize or destroy, and no bookkeeping about which condition variable belongs to which datum. This is the `sleep()`/`wakeup()` interface of the early Unix kernels, and Linux arrived at the same shape from the other direction: a `futex` is wait-and-wake on an address, and every pthreads primitive on Linux is built on one.
+`pt_wait()`, `pt_signal()` and `pt_broadcast()` are a condition variable with the `pthread_cond_t` left out. The names are taken straight from POSIX -- `pthread_cond_wait()`, `pthread_cond_signal()`, `pthread_cond_broadcast()` -- so that they read as they do everywhere else, even though there is no condition variable to pass to them. The channel is any address -- by convention the address of the variable whose value you are waiting on -- so there is nothing to declare, allocate, initialize or destroy, and no bookkeeping about which condition variable belongs to which datum. This is the `sleep()`/`wakeup()` interface of the early Unix kernels, which I once made work on a multiprocessor kernel and compared against semaphores in [Process Synchronization in the UTS Kernel](https://static.usenix.org/publications/compsystems/1990/sum_ruane.pdf) (Computing Systems, 1990). Linux arrived at the same shape from the other direction: a `futex` is wait-and-wake on an address, and every pthreads primitive on Linux is built on one.
 
 There is no associated mutex because the scheduler is non-preemptive. `pthread_cond_wait()` needs one to make "test the predicate" and "suspend" a single indivisible step; between protothreads nothing runs in between, so they already are. That is also exactly why signalling from an interrupt handler or another OS thread is unsafe -- it reopens the gap the mutex exists to close. See [Lost wakeups](#lost-wakeups).
 
@@ -837,7 +837,7 @@ None of this is needed to use protothreads, and none of it is part of the core. 
 >
 > Increment the semaphore and wake any waiters. Guaranteed not to block.
 
-This implementation is deliberately not fair: a thread can release and immediately reacquire ahead of existing waiters, which costs fewer context switches. If that matters, `pt_yield()` before reacquiring.
+This implementation is deliberately not fair. Releasing the semaphore wakes the waiters, but they can't take it until they run, so a protothread that releases and then reacquires without blocking in between gets it back ahead of them, and can keep doing so indefinitely. The fair alternative is to hand the semaphore straight to the oldest waiter, but then two protothreads that both use it heavily end up taking turns, with a context switch on every use and the hold time stretched by the wait to be scheduled. Those are convoys, and avoiding them is the reason event-wait semaphores work this way (see section 13 of [Process Synchronization in the UTS Kernel](https://static.usenix.org/publications/compsystems/1990/sum_ruane.pdf)). If a waiter mustn't starve, call `pt_yield()` between releasing and reacquiring, so the woken waiters run first.
 
 ### Timers ###
 
@@ -901,7 +901,7 @@ for (;;) {
 >
 > Release the lock. Guaranteed not to block.
 
-Requests are granted in arrival order, so a steady stream of readers cannot starve a waiting writer. Consecutive readers at the head of the queue are all started together.
+Requests are granted in arrival order, so a steady stream of readers cannot starve a waiting writer. Consecutive readers at the head of the queue are all started together. Unlike the semaphore, the lock is fair: a release hands it directly to the next request before waking it, so a protothread that releases and immediately reacquires waits its turn. The cost is the convoy described above.
 
 ## License ##
 
@@ -914,6 +914,8 @@ The one exception is `FindPROTOTHREAD.cmake`, which is third-party code by Ryan 
 [Wikipedia protothreads](http://en.wikipedia.org/wiki/Protothreads)
 
 [POSIX thread reference](http://pubs.opengroup.org/onlinepubs/9699919799/basedefs/pthread.h.html)
+
+Lawrence M. Ruane, [Process Synchronization in the UTS Kernel](https://static.usenix.org/publications/compsystems/1990/sum_ruane.pdf), Computing Systems 3(3), Summer 1990, pp. 387-421. Background for the wait-channel design, broadcast wakeups and semaphore convoys.
 
 I wish to gratefully acknowledge Adam Dunkels (with support from Oliver Schmidt) for inventing this brilliant idea. Please see his [web site](http://dunkels.com/adam/pt/).
 
