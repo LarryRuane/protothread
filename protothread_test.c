@@ -15,7 +15,8 @@
  */
 #define check(cond) do { \
     if (!(cond)) { \
-        fprintf(stderr, "%s:%d: check failed: %s\n", __FILE__, __LINE__, #cond) ; \
+        fprintf(stderr, "%s:%d: check failed: %s\n", \
+                __FILE__, __LINE__, #cond) ; \
         abort() ; \
     } \
 } while (0)
@@ -31,7 +32,7 @@ static void
 test_create_dynamic(void)
 {
     protothread_t const pt = protothread_create() ;
-    protothread_run(pt) ;
+    check(!protothread_run(pt)) ;       /* nothing is ready */
     protothread_free(pt) ;
 }
 
@@ -43,7 +44,7 @@ test_create_static(void)
     struct protothread_s static_pt ;
     protothread_t const pt = &static_pt ;
     protothread_init(pt) ;
-    protothread_run(pt) ;
+    check(!protothread_run(pt)) ;       /* nothing is ready */
     protothread_deinit(pt) ;
 }
 
@@ -73,7 +74,7 @@ test_thread_create(void)
 
     for (i = 0; i < 1000; i++) {
         pt_create(pt, &c->pt_thread, create_thr, c) ;
-        protothread_run(pt) ;
+        check(!protothread_run(pt)) ;
     }
     free(c) ;
     protothread_free(pt) ;
@@ -110,12 +111,13 @@ test_yield(void)
     pt_create(pt, &c->pt_thread, yield_thr, c) ;
 
     /* it hasn't run yet at all, make it reach the yield */
-    protothread_run(pt) ;
+    check(protothread_run(pt)) ;        /* it yielded, so it is ready again */
 
     for (i = 0; i < 10; i++) {
         /* make sure the protothread advances its loop */
         check(i == c->i) ;
-        protothread_run(pt) ;
+        /* the last iteration runs it off the end of its loop */
+        check(protothread_run(pt) == (i < 9)) ;
     }
     free(c) ;
     protothread_free(pt) ;
@@ -157,7 +159,7 @@ test_wait(void)
 
     /* threads haven't run yet at all, make them reach the wait */
     for (j = 0; j < 10; j++) {
-        protothread_run(pt) ;
+        check(protothread_run(pt) == (j < 9)) ;
     }
 
     for (i = 0; i < 10; i++) {
@@ -173,16 +175,16 @@ test_wait(void)
 
         /* run each thread once */
         for (j = 0; j < 10; j++) {
-            protothread_run(pt) ;
+            check(protothread_run(pt) == (j < 9)) ;
         }
         for (j = 0; j < 10; j++) {
             check(i+1 == c[j]->i) ;
         }
 
         /* extra steps and wrong signals shouldn't advance the thread */
-        protothread_run(pt) ;
+        check(!protothread_run(pt)) ;
         pt_broadcast(pt, c[0]) ;
-        protothread_run(pt) ;
+        check(!protothread_run(pt)) ; /* nobody waits on that channel */
         for (j = 0; j < 10; j++) {
             check(i+1 == c[j]->i) ;
         }
@@ -251,7 +253,7 @@ test_broadcast(void)
 
     /* threads haven't run yet at all, make them reach the wait */
     for (j = 0; j < N; j++) {
-        protothread_run(pt) ;
+        check(protothread_run(pt) == (j < N-1)) ;
     }
 
     for (i = 0; i < 10000; i++) {
@@ -268,7 +270,7 @@ test_broadcast(void)
         /* make sure every tread that should have run did run */
         for (j = 0; j < N; j++) {
             check(!gc.c[j].run) ;
-        } 
+        }
     }
     gc.done = true ;
     for (j = 0; j < N; j++) {
@@ -297,7 +299,7 @@ typedef struct pc_thread_context_s {
 
 #define N 1000
 
-/* The producer thread waits until the mailbox is empty, and then writes 
+/* The producer thread waits until the mailbox is empty, and then writes
  * the next value to the mailbox and pokes the consumer.
  */
 static pt_t
@@ -414,6 +416,7 @@ test_pc_big(void)
 typedef struct recursive_call_global_context_s {
     bool_t seen[NODES] ;
     int nseen ;
+    struct recursive_call_context_s * all ;   /* every context, freed last */
 } recursive_call_global_context_t ;
 
 typedef struct recursive_call_context_s {
@@ -423,6 +426,7 @@ typedef struct recursive_call_context_s {
     pt_thread_t pt_thread ;
     recursive_call_global_context_t * gc ;
     struct recursive_call_context_s * child_c ;
+    struct recursive_call_context_s * next_all ;
 } recursive_call_context_t ;
 
 static pt_t
@@ -440,37 +444,41 @@ recursive_thr(env_t const env)
         gc->seen[c->value] = true ;
         pt_wait(c, &gc->seen[rand() % CHANS]) ;
         gc->nseen ++ ;
-        free(c) ;
         return PT_DONE ;
     }
 
-    /* create the "left" (0) child; it will free this */
+    /* create the "left" (0) child; the test frees it at the end */
     c->child_c = malloc(sizeof(*c->child_c)) ;
     *c->child_c = *c ;
     c->child_c->level ++ ;
     c->child_c->value <<= 1 ;
+    c->child_c->next_all = gc->all ;
+    gc->all = c->child_c ;
     if ((rand() % 4)) {
         /* usually make a synchronous function call */
         pt_call(c, recursive_thr, c->child_c) ;
     } else {
         /* once in a while create a new thread (asynchronous) */
-        pt_create(pt_get_pt(c), &c->child_c->pt_thread, recursive_thr, c->child_c) ;
+        pt_create(pt_get_pt(c), &c->child_c->pt_thread,
+                  recursive_thr, c->child_c) ;
     }
     pt_wait(c, &gc->seen[rand() % CHANS]) ;
 
-    /* create the "right" (1) child; it will free this */
+    /* create the "right" (1) child; the test frees it at the end */
     c->child_c = malloc(sizeof(*c->child_c)) ;
     *c->child_c = *c ;
     c->child_c->level ++ ;
     c->child_c->value <<= 1 ;
     c->child_c->value ++ ;
+    c->child_c->next_all = gc->all ;
+    gc->all = c->child_c ;
     if ((rand() % 4)) {
         pt_call(c, recursive_thr, c->child_c) ;
     } else {
-        pt_create(pt_get_pt(c), &c->child_c->pt_thread, recursive_thr, c->child_c) ;
+        pt_create(pt_get_pt(c), &c->child_c->pt_thread,
+                  recursive_thr, c->child_c) ;
     }
 
-    free(c) ;
     return PT_DONE ;
 }
 
@@ -486,6 +494,7 @@ test_recursive_once(void)
     memset(top_c, 0, sizeof(*top_c)) ;
 
     top_c->gc = gc ;
+    gc->all = top_c ;
     pt_create(pt, &top_c->pt_thread, recursive_thr, top_c) ;
 
     /* it hasn't run yet at all, make it reach the call */
@@ -500,6 +509,11 @@ test_recursive_once(void)
     }
     for (i = 0; i < NODES; i++) {
         check(gc->seen[i]) ;
+    }
+    while (gc->all) {
+        recursive_call_context_t * const next = gc->all->next_all ;
+        free(gc->all) ;
+        gc->all = next ;
     }
     free(gc) ;
     protothread_free(pt) ;
@@ -552,7 +566,6 @@ sem_thr(env_t const env)
         pt_sem_release(&c->sem_env, &c->gc->sem_value) ;
         pt_yield(c) ;
     }
-    free(c) ;
     return PT_DONE ;
 }
 
@@ -561,6 +574,8 @@ test_sem(void)
 {
     protothread_t const pt = protothread_create() ;
     sem_global_context_t * gc = malloc(sizeof(*gc)) ;
+    sem_context_t * c[100] ;    /* the test frees these; a protothread may not
+                                 * free the context holding its pt_thread_t */
     int i ;
 
     gc->owner = 0 ;     /* invalid ID (no one in critical section) */
@@ -569,15 +584,18 @@ test_sem(void)
     gc->sem_value = 1 ;
 
     for (i = 0; i < 100; i++) {
-        sem_context_t * const c = malloc(sizeof(*c)) ;
-        c->gc = gc ;
-        c->id = i+1 ;
-        pt_create(pt, &c->pt_thread, sem_thr, c) ;
+        c[i] = malloc(sizeof(*c[i])) ;
+        c[i]->gc = gc ;
+        c[i]->id = i+1 ;
+        pt_create(pt, &c[i]->pt_thread, sem_thr, c[i]) ;
     }
 
     /* as long as there is work to do */
     while (protothread_run(pt)) ;
 
+    for (i = 0; i < 100; i++) {
+        free(c[i]) ;
+    }
     free(gc) ;
     protothread_free(pt) ;
 }
@@ -751,9 +769,9 @@ test_func_pointer(void)
     /* pt_create() can take a function pointer */
     c.level2.ran = false ;
     pt_create(pt, &c.pt_thread, func_ptr, &c) ;
-    protothread_run(pt) ;
+    check(protothread_run(pt)) ;        /* level 2 yielded */
     check(!c.level2.ran) ;
-    protothread_run(pt) ;
+    check(!protothread_run(pt)) ;       /* now it runs off the end */
     check(c.level2.ran) ;
 
     protothread_free(pt) ;
@@ -833,7 +851,6 @@ test_ready(void)
 typedef struct kill_context_s {
     pt_thread_t pt_thread ;
     pt_func_t pt_func ;
-    bool atexit_ran ;
 } kill_context_t ;
 
 static pt_t
@@ -853,13 +870,6 @@ kill_thr(env_t const env)
 }
 
 static void
-atexit_fn(env_t const env)
-{
-    kill_context_t * const c = env ;
-    c->atexit_ran = true ;
-}
-
-static void
 test_kill(void)
 {
     protothread_t const pt = protothread_create() ;
@@ -874,7 +884,6 @@ test_kill(void)
     more = protothread_run(pt) ;
     check(!more) ;
     check(pt->ready == NULL) ;
-    check(!c[0].atexit_ran) ;
 
     /* Try to kill it one more time, just for giggles. This may not cause any
      * apparent problems, but memory-checker tools like valgrind will flag
@@ -930,14 +939,6 @@ test_kill(void)
     more = protothread_run(pt) ;
     check(!more) ;
 
-    /* Verify atexit behavior
-     */
-    pt_create(pt, &c[0].pt_thread, kill_thr, &c[0]) ;
-    pt_set_atexit(&c[0].pt_thread, atexit_fn) ;
-    check(!c[0].atexit_ran) ;
-    check(pt_kill(&c[0].pt_thread)) ;
-    check(c[0].atexit_ran) ;
-
     free(c) ;
     protothread_free(pt) ;
 }
@@ -975,14 +976,14 @@ test_reset(void)
      */
     pt_create(pt, &c->pt_thread, reset_thr, c) ;
 
-    protothread_run(pt) ;
+    check(protothread_run(pt)) ;
     check(c->i == 0) ;
 
-    protothread_run(pt) ;
+    check(protothread_run(pt)) ;
     check(c->i == 1) ;
     pt_reset(c) ;
 
-    protothread_run(pt) ;
+    check(protothread_run(pt)) ;
     check(c->i == 0) ;
 
     while (protothread_run(pt)) ;
@@ -1160,12 +1161,134 @@ test_timer(void)
     check(pt_time_after(10, 5)) ;
     check(!pt_time_after(5, 10)) ;
     check(!pt_time_after(5, 5)) ;
-    check(pt_time_after(5, (pt_time_t)-5)) ;        /* 5 is after -5 across the wrap */
+    check(pt_time_after(5, (pt_time_t)-5)) ; /* 5 is after -5 across the wrap */
     check(!pt_time_after((pt_time_t)-5, 5)) ;
 }
 
 
 /******************************************************************************/
+
+/******************************************************************************/
+
+typedef struct join_worker_context_s {
+    pt_thread_t pt_thread ;
+    pt_func_t pt_func ;
+    int i ;
+    bool_t exited ;
+} join_worker_context_t ;
+
+typedef struct join_joiner_context_s {
+    pt_thread_t pt_thread ;
+    pt_func_t pt_func ;
+    join_worker_context_t * target ;
+    bool_t joined ;
+} join_joiner_context_t ;
+
+static int join_channel ;
+
+static pt_t
+join_worker_thr(env_t const env)
+{
+    join_worker_context_t * const c = env ;
+    pt_resume(c) ;
+
+    for (c->i = 0; c->i < 3; c->i++) {
+        pt_yield(c) ;
+    }
+    c->exited = true ;
+    return PT_DONE ;
+}
+
+/* blocks until killed, so a joiner can be released by pt_kill() */
+static pt_t
+join_blocker_thr(env_t const env)
+{
+    join_worker_context_t * const c = env ;
+    pt_resume(c) ;
+
+    pt_wait(c, &join_channel) ;
+    return PT_DONE ;
+}
+
+static pt_t
+join_joiner_thr(env_t const env)
+{
+    join_joiner_context_t * const c = env ;
+    pt_resume(c) ;
+
+    pt_join(c, &c->target->pt_thread) ;
+    check(!pt_is_alive(&c->target->pt_thread)) ;
+    c->joined = true ;
+    return PT_DONE ;
+}
+
+/* bounded, so a join that never returns fails the suite rather than hangs */
+static void
+join_drain(protothread_t pt)
+{
+    int i ;
+
+    for (i = 0; i < 1000 && protothread_run(pt); i++) {
+    }
+    check(i < 1000) ;
+}
+
+static void
+test_join(void)
+{
+    protothread_t const pt = protothread_create() ;
+    join_worker_context_t w ;
+    join_joiner_context_t j1, j2 ;
+
+    /* the joiner blocks, and is released when the worker exits */
+    memset(&w, 0, sizeof(w)) ; memset(&j1, 0, sizeof(j1)) ;
+    pt_create(pt, &w.pt_thread, join_worker_thr, &w) ;
+    check(pt_is_alive(&w.pt_thread)) ;
+    j1.target = &w ;
+    pt_create(pt, &j1.pt_thread, join_joiner_thr, &j1) ;
+    join_drain(pt) ;
+    check(w.exited) ;
+    check(j1.joined) ;
+    check(!pt_is_alive(&w.pt_thread)) ;
+
+    /* joining one that exited before the joiner even existed */
+    memset(&w, 0, sizeof(w)) ; memset(&j1, 0, sizeof(j1)) ;
+    pt_create(pt, &w.pt_thread, join_worker_thr, &w) ;
+    join_drain(pt) ;
+    check(w.exited) ;
+    j1.target = &w ;
+    pt_create(pt, &j1.pt_thread, join_joiner_thr, &j1) ;
+    join_drain(pt) ;
+    check(j1.joined) ;
+
+    /* two joiners on one target */
+    memset(&w, 0, sizeof(w)) ;
+    memset(&j1, 0, sizeof(j1)) ;
+    memset(&j2, 0, sizeof(j2)) ;
+    pt_create(pt, &w.pt_thread, join_worker_thr, &w) ;
+    j1.target = &w ;
+    j2.target = &w ;
+    pt_create(pt, &j1.pt_thread, join_joiner_thr, &j1) ;
+    pt_create(pt, &j2.pt_thread, join_joiner_thr, &j2) ;
+    join_drain(pt) ;
+    check(j1.joined) ;
+    check(j2.joined) ;
+
+    /* a killed thread releases its joiners too */
+    memset(&w, 0, sizeof(w)) ; memset(&j1, 0, sizeof(j1)) ;
+    pt_create(pt, &w.pt_thread, join_blocker_thr, &w) ;
+    j1.target = &w ;
+    pt_create(pt, &j1.pt_thread, join_joiner_thr, &j1) ;
+    join_drain(pt) ;            /* both are now blocked */
+    check(!j1.joined) ;
+    check(pt_is_alive(&w.pt_thread)) ;
+    check(pt_kill(&w.pt_thread)) ;
+    check(!pt_is_alive(&w.pt_thread)) ;
+    join_drain(pt) ;
+    check(j1.joined) ;
+
+    protothread_free(pt) ;
+}
 
 static void
 test_version(void)
@@ -1178,12 +1301,127 @@ test_version(void)
     check(strcmp(buf, PT_VERSION_STRING) == 0) ;
 
     check(PT_VERSION_NUMBER ==
-          PT_VERSION_MAJOR * 10000 + PT_VERSION_MINOR * 100 + PT_VERSION_PATCH) ;
+          PT_VERSION_MAJOR * 10000
+          + PT_VERSION_MINOR * 100
+          + PT_VERSION_PATCH) ;
 
     check(PT_VERSION_AT_LEAST(0, 0, 0)) ;
-    check(PT_VERSION_AT_LEAST(PT_VERSION_MAJOR, PT_VERSION_MINOR, PT_VERSION_PATCH)) ;
+    check(PT_VERSION_AT_LEAST(
+        PT_VERSION_MAJOR, PT_VERSION_MINOR, PT_VERSION_PATCH)) ;
     check(!PT_VERSION_AT_LEAST(PT_VERSION_MAJOR + 1, 0, 0)) ;
 }
+
+/******************************************************************************/
+
+/* Interrupt races. These need the critical-section harness from CI, which
+ * counts nesting depth and can fire a fake interrupt handler at the moment
+ * interrupts are about to be masked -- the only moment a real one can land.
+ */
+#ifdef PT_TEST_IRQ
+
+static int irq_ready_depth ;
+static int irq_ready_count ;
+
+static void
+irq_ready_function(env_t env)
+{
+    protothread_t const pt = env ;
+    pt_thread_t const * t = pt->ready ;
+
+    irq_ready_depth = pt_cs_depth ;
+    irq_ready_count = 0 ;
+    if (t) {
+        do {
+            irq_ready_count++ ;
+            t = t->next ;
+        } while (t != pt->ready) ;
+    }
+}
+
+typedef struct {
+    pt_thread_t pt_thread ;
+    pt_func_t pt_func ;
+    pt_timer_env_t timer_env ;
+    int done ;
+} irq_context_t ;
+
+static int irq_channel ;
+
+static pt_t
+irq_waiter_thr(env_t const env)
+{
+    irq_context_t * const c = env ;
+    pt_resume(c) ;
+    pt_wait(c, &irq_channel) ;
+    c->done = 1 ;
+    return PT_DONE ;
+}
+
+static protothread_t irq_pt ;
+static pt_timers_t irq_timers ;
+
+static pt_t
+irq_sleeper_thr(env_t const env)
+{
+    irq_context_t * const c = env ;
+    pt_resume(c) ;
+    pt_sleep(c, &c->timer_env, &irq_timers, 1) ;
+    c->done = 1 ;
+    return PT_DONE ;
+}
+
+static void
+irq_tick(void)
+{
+    pt_timer_run(irq_pt, &irq_timers, 1) ;
+}
+
+static void
+test_interrupts(void)
+{
+    int k ;
+
+    /* the ready function runs unmasked, after every waiter has been moved */
+    {
+        protothread_t const pt = protothread_create() ;
+        irq_context_t w[3] ;
+        int i ;
+
+        memset(w, 0, sizeof(w)) ;
+        for (i = 0; i < 3; i++) {
+            pt_create(pt, &w[i].pt_thread, irq_waiter_thr, &w[i]) ;
+        }
+        while (protothread_run(pt)) ;
+        protothread_set_ready_function(pt, irq_ready_function, pt) ;
+        pt_broadcast(pt, &irq_channel) ;
+        check(irq_ready_depth == 0) ;
+        check(irq_ready_count == 3) ;
+        while (protothread_run(pt)) ;
+        check(w[0].done && w[1].done && w[2].done) ;
+        protothread_free(pt) ;
+    }
+
+    /* a tick interrupt at any point during pt_sleep() is never lost */
+    for (k = 1; k <= 8; k++) {
+        irq_context_t c ;
+
+        memset(&c, 0, sizeof(c)) ;
+        irq_pt = protothread_create() ;
+        pt_timers_init(&irq_timers, 0) ;
+        pt_create(irq_pt, &c.pt_thread, irq_sleeper_thr, &c) ;
+        pt_cs_irq = irq_tick ;
+        pt_cs_irq_at = k ;
+        while (protothread_run(irq_pt)) ;
+        pt_cs_irq = NULL ;
+        /* later ticks, long after any deadline; a lost wakeup stays lost */
+        pt_timer_run(irq_pt, &irq_timers, 50) ;
+        while (protothread_run(irq_pt)) ;
+        check(c.done) ;
+        protothread_free(irq_pt) ;
+    }
+}
+
+#endif /* PT_TEST_IRQ */
 
 /******************************************************************************/
 
@@ -1206,7 +1444,11 @@ main()
     test_kill() ;
     test_reset() ;
     test_timer() ;
+    test_join() ;
     test_version() ;
+#ifdef PT_TEST_IRQ
+    test_interrupts() ;
+#endif
 
     return 0 ;
 }

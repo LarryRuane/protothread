@@ -1,5 +1,5 @@
 /**************************************************************/
-/* PROTOTHREAD_POOL_EXAMPLE.C */
+/* DEMO/POOL.C */
 /* https://github.com/LarryRuane/protothread */
 /* Copyright (c) 2008-present Larry Ruane */
 /* Distributed under the MIT software license, see the accompanying */
@@ -142,7 +142,7 @@ pool_thr(env_t const env)
  * thread, and only between protothread runs, which is what makes it safe.
  */
 static int
-drain_completions(state_t const s)
+drain_completions(protothread_t const s)
 {
     job_t * batch[NJOBS] ;
     int n = 0 ;
@@ -207,7 +207,8 @@ main(void)
     }
     protothread_deinit(&state) ;
 
-    printf("%d protothreads, %d worker threads, checksum %ld (expected %ld): %s\n",
+    printf("%d protothreads, %d worker threads, "
+           "checksum %ld (expected %ld): %s\n",
            NJOBS, NWORKERS, checksum, expect,
            checksum == expect ? "OK" : "MISMATCH") ;
     return checksum != expect ;

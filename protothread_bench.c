@@ -106,7 +106,9 @@ bench_pt_switch(long iters)
 }
 
 static pthread_mutex_t pp_mutex = PTHREAD_MUTEX_INITIALIZER ;
-static pthread_cond_t pp_cond[2] = { PTHREAD_COND_INITIALIZER, PTHREAD_COND_INITIALIZER } ;
+static pthread_cond_t pp_cond[2] = {
+    PTHREAD_COND_INITIALIZER, PTHREAD_COND_INITIALIZER
+} ;
 static int pp_turn ;
 static long pp_iters ;
 
@@ -189,7 +191,8 @@ bench_pt_create(long iters)
     t1 = now_ns() ;
     protothread_free(pt) ;
     if (work_done != iters) {
-        fprintf(stderr, "benchmark did not run: %ld of %ld\n", work_done, iters) ;
+        fprintf(stderr, "benchmark did not run: %ld of %ld\n",
+                work_done, iters) ;
         exit(1) ;
     }
     return (t1 - t0) / (double)iters ;
@@ -218,7 +221,8 @@ bench_posix_create(long iters)
     }
     t1 = now_ns() ;
     if (work_done != iters) {
-        fprintf(stderr, "benchmark did not run: %ld of %ld\n", work_done, iters) ;
+        fprintf(stderr, "benchmark did not run: %ld of %ld\n",
+                work_done, iters) ;
         exit(1) ;
     }
     return (t1 - t0) / (double)iters ;
@@ -276,6 +280,7 @@ main(int argc, char **argv)
            "  per-thread cost, all of it resident.  pthread memory is\n"
            "  PTHREAD_STACK_MIN, the smallest stack the platform allows;\n"
            "  the default here is %zu bytes of reserved address space,\n"
-           "  of which only the touched pages become resident.\n", posix_bytes) ;
+           "  of which only the touched pages become resident.\n",
+           posix_bytes) ;
     return 0 ;
 }

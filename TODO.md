@@ -19,11 +19,9 @@ Investigated; it is closer than expected. With `g++ 15 -std=c++17 -Wall -Wextra`
 
 Two things to fix or document:
 
-1. **One real blocker.** `protothread_create()` does
-   `state_t const s = malloc(sizeof(*s))`, and C++ has no implicit conversion
-   from `void *`. A cast fixes it for both languages:
-   `state_t const s = (state_t)malloc(sizeof(*s))`.
-   Everything else builds clean, and `PT_NO_MALLOC` sidesteps it entirely.
+1. ~~**One real blocker.**~~ Done. `protothread_create()` assigned `malloc()`'s
+   `void *` to a typed pointer, which C++ will not convert implicitly; it now
+   casts, and CI builds and runs a protothread as C++.
 
 2. **One silent trap, and it needs a loud warning in the README.** The existing C
    rule -- a protothread function cannot keep state in a local across a wait --
@@ -49,17 +47,20 @@ Two things to fix or document:
         scheduler state: running=STALE (non-NULL) ready=nonempty
 
    After that, `protothread_run()`'s `pt_assert(s->running == NULL)` fires in a
-   debug build, and in a production build `pt_add_ready()`'s `!s->running` test
+   debug build, and in a production build `pt_i_add_ready()`'s `!s->running` test
    is wrong permanently, so `ready_function` never fires again. The throwing
    protothread is also off every list with its context un-freed. Any C++ use
    needs `protothread_run()` to restore `s->running` on the way out -- a
    `try`/`catch(...)` that resets it and rethrows, or a small RAII guard --
    and a documented policy for what a throwing protothread means.
 
-Also worth doing for a C++ port: `pt_set_atexit()` is the natural hook for
-running a context's destructor when a protothread is killed.
+Also worth doing for a C++ port: running a context's destructor when a
+protothread is killed. The wrapper is templated on the context type, so the code
+that kills a protothread already knows the type and can call `pt_kill()`, then
+destroy the context -- which is why `pt_set_atexit()` was removed rather than
+kept as a hook for this.
 
-Note that for a *hosted* C++ codebase, C++20 coroutines already provide
+Note that for a *hosted* C++ codebase, C\+\+20 coroutines already provide
 suspendable functions with working locals, RAII and exceptions, at the cost of a
 heap-allocated frame. Protothreads win where that frame is unaffordable. The
 port is most valuable for C++ on microcontrollers, which is where the memory
@@ -79,9 +80,46 @@ Timers are done (`protothread_timer.h`). Remaining, most useful first:
     can come from either the primitive or the timer. Raw `pt_wait()` on a shared
     channel cannot support this, because a thread can only be on one wait list
     (`pt_thread_t` has a single `channel` field and a single `next` pointer).
-  * **`pt_join()`.** The README says outright that the system cannot tell you
-    when a thread exits. The exiting thread broadcasts on its own
-    `pt_thread_t` address; an "exited" flag avoids losing a late join.
+  * **A bounded-delay sweep, and a lost-wakeup detector.** A production system
+    that hangs on a lost signal is usually worse off than one that recovers
+    after 100 ms and complains. This is not the hack it first looks like: the
+    "Wait channels" section argues that `pt_wait()` is a busy-wait loop with a
+    delay inserted, and a real spin loop cannot miss anything because it
+    re-tests continuously. Bounding the delay buys back exactly the property
+    that was traded away, and turns a lost wakeup from a liveness bug into a
+    latency bug. The predicate loop makes it safe by construction -- a timeout
+    wake is one more turn of a loop that was always entitled to turn.
+
+    Note that this does *not* need the wait-with-timeout machinery above. A
+    global sweep -- every N ticks, move every waiting protothread to the ready
+    list -- sidesteps the single-`channel`, single-`next` constraint entirely:
+    no per-thread timer, no dual list membership, O(waiting) per sweep, and
+    almost everyone re-tests and goes straight back to waiting. A thousand
+    waiters swept at 10 Hz is ten thousand resumes a second, under a tenth of a
+    percent of a core on a hosted system.
+
+    The detector is the more valuable half, and works with or without the
+    recovery. After a sweep wake, the scheduler can see whether a protothread
+    went back onto the same wait list or made progress. If it made progress its
+    predicate was true and nobody had signalled -- a lost wakeup, and with
+    `PT_DEBUG` on, `pt_func_t` already carries the `__FILE__`/`__LINE__` to name
+    the wait site. Evidence rather than proof, since the predicate could have
+    become true in a benign race, but precisely targeted.
+
+    Two constraints if this is built. It must be driven by the caller's clock,
+    not a real one, or it costs the determinism claim -- `pt_timer_run()`
+    already takes `now` as an argument, so a test build on simulated time stays
+    reproducible while production uses the real thing. And it must be
+    compile-time optional and off by default: on an MCU that would otherwise
+    idle for seconds in `wait_for_interrupt()`, a 10 Hz sweep is a real power
+    cost.
+
+    The objection to answer is that self-healing hides bugs. A hang is trivial
+    to diagnose with the gdb macros in this repository -- dump every
+    protothread's stack and see who is stuck on what -- whereas a system that
+    quietly recovers every 100 ms has buried the same defect. That is an
+    argument for building the detector first and the recovery second, and for
+    the log line naming the wait site rather than counting sweeps.
   * **Barrier and countdown latch.** Both tiny; the latch is Go's `WaitGroup`,
     which suits the fan-out/fan-in shape protothreads fall into naturally.
 
@@ -107,16 +145,17 @@ debugging into a one-line call, and costs nothing in a production build.
   * ~~Continuous integration~~ -- done, `.github/workflows/ci.yml`. Its first
     run found that the library did not build under clang at all.
   * ~~Tag a release~~ -- done, `v2.0.0`.
-  * **Document that `pt_wait`/`pt_signal` *is* a condition variable**, and that
-    it needs no associated mutex because the scheduler is non-preemptive.
-    People arriving from pthreads look for `pt_cond_t`, fail to find it, and
-    conclude something is missing that is not.
-  * **Better wait-list hash.** `((uintptr_t)chan >> 4) & (PT_NWAIT-1)` clusters
-    badly when channels are elements of an array of structures: 1000 contexts of
-    128 bytes reach only 128 of 1024 buckets, with chains 8 long. A multiply-shift
-    on the high bits gives 847 buckets and chains of 2. But this is a *hosted*
-    optimization -- a 64-bit multiply is expensive on an 8- or 16-bit MCU, and at
-    `PT_NWAIT=1` there is no hash at all -- so it should be conditional.
+  * ~~Document that `pt_wait`/`pt_signal` *is* a condition variable~~ -- done,
+    the "Wait channels" section of README.md, which also makes the case for the
+    interface: it is universal, and it degenerates to a busy-wait loop you can
+    always reason about.
+  * ~~Better wait-list hash~~ -- done, Fibonacci hashing in
+    `pt_i_get_wait_list()`. The old shift clustered badly when channels were
+    elements of an array: 1000 contexts of 128 bytes reached 128 of the 1024
+    buckets, against 916 now. The concern that this was a *hosted* optimization
+    went away once the multiplier was sized to `uintptr_t`, so a 16-bit target
+    does a 16-bit multiply, and at `PT_NWAIT=1` the mask is zero and both gcc
+    and clang drop the multiply entirely.
   * **A payload in `pt_t`.** `pt_t` is already a struct wrapping the return
     enum, so adding an `intptr_t` would let a child protothread return one word
     directly. It would actually work: only the final `PT_DONE` return reaches a
@@ -129,6 +168,21 @@ debugging into a one-line call, and costs nothing in a production build.
     buys syntax for a single word where the callee's context structure already
     carries any number of values for free. See "Structure of a protothread" in
     README.md for that idiom.
+  * **Do not "simplify" `protothread_init()`.** The explicit loop that clears
+    `s->wait[]` looks like something to replace with
+    `*s = (struct protothread_s){0}`, and that is wrong. Measured undefined
+    symbols in a freestanding build at `PT_NWAIT=1024`: the loop needs none at
+    any optimization level, while the struct assignment makes gcc emit `memset`
+    and clang emit `memcpy` and `memset` at `-O0` (none at `-O1` and above). That
+    breaks the zero-libc-symbols guarantee in exactly the build someone debugging
+    on bare metal would use. `-ffreestanding` does not prevent it: the standard
+    permits a compiler to emit calls to `memcpy`, `memset`, `memmove` and
+    `memcmp` even in freestanding mode, which is why that property has to be
+    tested rather than assumed. The CI freestanding job loops `-O0` through
+    `-Os`, so it would catch a regression -- the `-O0` in that list is
+    load-bearing. (Relatedly: C has no default member initializers, the C\+\+11
+    feature that would let the defaults live in the struct declaration itself.
+    C23's `= {}` still initializes an object, not a type.)
   * **`pt_mutex_t`.** A semaphore of 1 or the write half of the reader-writer
     lock already covers it, but a dedicated one would be smaller and could assert
     that the releaser is the owner.
@@ -136,4 +190,72 @@ debugging into a one-line call, and costs nothing in a production build.
     platform, though clang works fine. Make it conditional or drop it.
   * **Killing a sleeping protothread** leaves a dangling entry on the timer list
     unless `pt_timer_cancel()` is called first; same hazard the reader-writer
-    lock has. Documented, but could be handled automatically via `pt_atexit`.
+    lock has. Documented; a generated typed kill (see type-safe top-level
+    protothreads, below) could cancel the timer automatically.
+  * **Type-safe top-level protothreads, with no cast in user code.** Nested
+    functions need nothing here: `pt_call()` is a direct call, so their context
+    parameter can already carry its real type, and the README now teaches that.
+    The unavoidable erasure is at the top level, where the scheduler stores every
+    protothread's function in one list and calls `t->func(t->env)`.
+
+    The fix is the generic-header technique Mark Hayden used at LeftHand for hash
+    tables: have the preprocessor stamp out code per type. Here that means one
+    macro per context type generating a trampoline, which does the single cast,
+    and a typed creator:
+
+        PT_DEFINE_THREAD(conn, conn_ctx_t, conn_thr)
+        /* generates pt_create_conn(protothread_t, conn_ctx_t *), and a static
+           trampoline calling pt_t conn_thr(conn_ctx_t * const c) */
+
+    User code then never casts, a mismatched `pt_create_conn()` is a compile
+    error, and top-level functions need no cast under C++ either. For two tiny
+    generated functions a single macro, `sys/tree.h`-style, beats Hayden's
+    define/include/undef form, which earns its keep when the generated body is
+    large enough to want real source lines and a debugger that can step it.
+
+    Measure before adopting. gcc says outright that a protothread function "can
+    never be inlined because it contains a computed goto", so the trampoline is
+    a genuine extra call on every resume. Probably around a nanosecond, but this
+    library leads with a 4.6 ns context switch, so benchmark it first. It is
+    purely additive -- `pt_create()` and `env_t` stay -- so it need not wait on a
+    major version.
+
+    Two related notes. It could also generate a typed `pt_kill_conn()` that kills
+    and then runs the creator's cleanup, fully type-checked -- the natural
+    replacement for the removed `pt_set_atexit()`. A truly generic killer holding
+    only a `pt_thread_t *` would still need a registry of its own. And channels
+    should stay `void *`:
+    they are identity tokens, never dereferenced, and being able to wait on any
+    address is the point.
+  * **A lock-free completion queue, and the wakeup it does not solve.** Both
+    `demo/pool.c` and `demo/helper_thread.c` carry finished work from another
+    thread back to the scheduler, one through a mutex-protected array and the
+    other through a self-pipe. Either could be a lock-free multi-producer queue
+    instead. A Treiber stack fits particularly well: producers CAS a node onto a
+    head pointer, the consumer takes the whole list in one atomic exchange and
+    walks it, order comes out LIFO and can be reversed. No capacity limit, no
+    allocation, and the nodes can be intrusive, since `pt_thread_t` already has
+    a `next`. Single-producer is easier still -- a ring needs no CAS at all,
+    only a release-store of the index after the payload.
+
+    The catch is that this replaces only half of what the pipe does. A
+    lock-free structure in memory cannot wake a thread asleep in `poll()`, so
+    an OS primitive is still required for the wakeup: condvar, eventfd,
+    semaphore or signal. The queue and the wakeup are separable concerns and
+    only the queue can be made lock-free. That is also why the two demos differ
+    on purpose. `pool.c` waits on nothing but its workers, so a condvar is both
+    simpler and faster than a pipe -- an uncontended mutex costs tens of
+    nanoseconds against two syscalls. A self-pipe earns its keep when one
+    `poll()` has to cover real I/O *and* cross-thread notification, and when
+    the notifier is a signal handler, where `write()` is async-signal-safe and
+    a mutex is not.
+
+    Portability points the same way. `pipe()` is POSIX and needs a loopback
+    socketpair on Windows; `eventfd()` is cheaper but Linux-only; and on bare
+    metal there are no pipes at all, which is exactly where a queue drained by
+    the main loop is the mechanism the README's "Lost wakeups" section already
+    prescribes. If any of this ever moves into the library itself, note that
+    `<stdatomic.h>` is C11 and is not a freestanding header, so requiring it
+    would cost both the `-std=c99` support and the zero-libc claim -- whereas
+    the gcc/clang `__atomic_*` builtins work at any `-std`, and the library
+    already requires those compilers for computed goto.

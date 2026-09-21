@@ -53,13 +53,22 @@ if(PROTOTHREAD_BENCH)
     target_compile_options(ptbench PRIVATE -O2)
 endif()
 
-# The thread-pool example needs POSIX threads too; also off by default.
-#   cmake -S . -B build -DPROTOTHREAD_EXAMPLES=ON && ./build/ptpool
-option(PROTOTHREAD_EXAMPLES "Build the POSIX thread-pool example" OFF)
-if(PROTOTHREAD_EXAMPLES)
+# The demo programs in demo/ are off by default: two of the three need
+# POSIX threads, and none of them must become a dependency of an ordinary
+# build, least of all a cross-compiled one.
+#   cmake -S . -B build -DPROTOTHREAD_DEMOS=ON && ./build/ptpool
+option(PROTOTHREAD_DEMOS "Build the demo programs in demo/" OFF)
+if(PROTOTHREAD_DEMOS)
     find_package(Threads REQUIRED)
-    add_executable(ptpool protothread_pool_example.c)
+    add_executable(ptpool demo/pool.c)
     target_link_libraries(ptpool PRIVATE protothread Threads::Threads)
+
+    # this one is single-threaded: poll() and pipes, no pthreads at all
+    add_executable(ptaio demo/async_io.c)
+    target_link_libraries(ptaio PRIVATE protothread)
+
+    add_executable(pthelper demo/helper_thread.c)
+    target_link_libraries(pthelper PRIVATE protothread Threads::Threads)
 endif()
 
 configure_file(
