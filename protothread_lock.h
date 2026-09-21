@@ -187,18 +187,9 @@ pt_lock_release_write(pt_lock_env_t *c, pt_lock_t *lock)
 
 /* TODO: "try" routines (cannot block, return bool_t)
  *
- * TODO: upgrades
- *
- * Various 'force' levels; either have routines that do these or
- * return an error if they can't, or have predicates and have the
- * routines assert if they can't do it:
- *
- * - fairly without context break (no other active readers, no waiters)
- * - unfairly without context break (no other active readers, waiting writer)
- * - fairly with context break (no waiting writer; wait for readers to drain)
- * - unfairly with context break (waiting writer; wait for readers to drain)
- *
- * Even that last one fails if there's a pending upgrade.
+ * An upgrade needs no routine of its own: release the read lock, acquire the
+ * write lock, and pt_call_waited() says whether that blocked. If it didn't,
+ * nothing else ran and the upgrade was atomic; see README.md.
  */
 
 #endif /* PROTOTHREAD_LOCK_H */

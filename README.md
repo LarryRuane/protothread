@@ -915,6 +915,18 @@ for (;;) {
 
 Requests are granted in arrival order, so a steady stream of readers cannot starve a waiting writer. Consecutive readers at the head of the queue are all started together. Unlike the semaphore, the lock is fair: a release hands it directly to the next request before waking it, so a protothread that releases and immediately reacquires waits its turn. The cost is the convoy described above.
 
+There's no upgrade call, because you don't need one. Release the read lock, acquire the write lock, and ask whether that blocked:
+
+```c
+pt_lock_release_read(&c->lock_env, c->lock);
+pt_lock_acquire_write(c, &c->lock_env, c->lock);
+if (pt_call_waited(c)) {
+    /* others may have written while we waited; re-check what we read */
+}
+```
+
+Releasing never blocks, so if acquiring didn't either, nothing else ran in between and the upgrade was atomic. That's the case when you were the only reader and nobody was queued. Otherwise you still end up holding the write lock, but anything you read under the read lock may be stale. The answer can only be wrong in the safe direction: if another reader was holding the lock, it reports a wait even though nothing changed.
+
 ## License ##
 
 MIT. See [LICENSE](LICENSE).
