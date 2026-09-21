@@ -21,6 +21,29 @@ defaults:
     shell: bash
 
 jobs:
+  # C sources fit in 80 columns, and nothing has tabs or trailing whitespace.
+  # Markdown is exempt from the last, since two trailing spaces are a line break.
+  style:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Check line length, tabs and trailing whitespace
+        run: |
+          set -euo pipefail
+          fail=0
+          if ! git ls-files -z '*.c' '*.h' | xargs -0 awk '
+                length > 80 { printf "%s:%d: %d columns\n", FILENAME, FNR, length ; bad = 1 }
+                END { exit bad }' ; then
+            fail=1
+          fi
+          if git grep -I -n $'\t' ; then
+            echo "tab characters found" ; fail=1
+          fi
+          if git grep -I -n -E '[[:space:]]+$' -- . ':!*.md' ; then
+            echo "trailing whitespace found" ; fail=1
+          fi
+          exit $fail
+
   # PT_DEBUG and PT_NWAIT change struct layouts and code paths, and NDEBUG
   # changes which checks survive, so every combination gets exercised.
   test:
