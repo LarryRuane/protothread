@@ -300,7 +300,7 @@ Note the wording: "lists stay intact" is not the same as "correct". There is a s
         pt_wait(c, job)    <--- enqueues, and sleeps forever
 ```
 
-The predicate test and `pt_wait()`'s enqueue are not atomic with respect to another context, and no critical section can make them so, because `pt_wait()` returns from the function. Among protothreads this race cannot happen -- nothing runs in between -- which is exactly why it is easy to overlook when an interrupt handler is added later.
+The predicate test and `pt_wait()`'s enqueue are not atomic with respect to another context, and your code can't make them so with a critical section, because `pt_wait()` returns from the function in between. (The library's own `pt_sleep()` does it internally, which is what makes `pt_timer_run()` safe to call from an interrupt.) Among protothreads this race cannot happen -- nothing runs in between -- which is exactly why it is easy to overlook when an interrupt handler is added later.
 
 The fix is to not signal from the outside at all. Have the handler record what happened -- set a flag, push onto a queue -- and have the loop that owns `protothread_run()` turn that into a `pt_signal()` **between** protothread runs. At that point no protothread is mid-execution, so every waiter has finished enqueuing:
 
@@ -308,9 +308,15 @@ The fix is to not signal from the outside at all. Have the handler record what h
 for (;;) {
     drain_pending_signals(pt);    /* flags -> pt_signal(), in thread context */
     while (protothread_run(pt));
-    wait_for_interrupt();
+    disable_interrupts();
+    if (!signals_pending()) {
+        wait_for_interrupt();     /* still wakes for an interrupt already pending */
+    }
+    enable_interrupts();
 }
 ```
+
+Check for work with interrupts masked before waiting. Otherwise an interrupt that lands after the last check but before `wait_for_interrupt()` is serviced right there, and the loop sleeps until some later interrupt with work already waiting. On Cortex-M, `__WFI()` with `PRIMASK` set still wakes for a pending interrupt, which is what makes this work, and most other cores have an equivalent.
 
 `demo/pool.c` is a complete working program built this way, and `demo/helper_thread.c` uses a self-pipe to the same end. A pleasant side effect: if signals are only ever raised from the scheduler's own context, the lists are never touched concurrently and `PT_CRITICAL_*` is not needed at all.
 
@@ -877,17 +883,26 @@ This implementation is deliberately not fair. Releasing the semaphore wakes the 
 
 The clock type is `PT_TIME_T` (default `uint32_t`), paired with the signed `PT_TIME_DIFF_T` (default `int32_t`). **Counter wraparound is handled correctly**: comparisons use a signed difference rather than a direct `>`, so a 32-bit millisecond clock behaves properly across its 49-day rollover. The one requirement is that no live deadline be more than half the counter range in the future -- about 24 days for that clock.
 
-A typical bare-metal idle loop:
+A typical bare-metal idle loop. The ready function tells it whether an interrupt made anything ready after the last run, so it never sleeps with work waiting (see [Lost wakeups](#lost-wakeups)):
 
 ```c
+static volatile bool work;
+static void on_ready(void *env) { work = true; }    /* may run in an interrupt */
+
+protothread_set_ready_function(pt, on_ready, NULL);
 for (;;) {
     pt_timer_run(pt, &timers, clock_now());
+    work = false;
     while (protothread_run(pt));
-    if (pt_timer_next(&timers, &deadline)) {
-        sleep_until(deadline);
-    } else {
-        wait_for_interrupt();
+    disable_interrupts();
+    if (!work) {
+        if (pt_timer_next(&timers, &deadline)) {
+            sleep_until(deadline);      /* like WFI, wakes for a pending interrupt */
+        } else {
+            wait_for_interrupt();
+        }
     }
+    enable_interrupts();
 }
 ```
 
