@@ -218,9 +218,22 @@ jobs:
           # __builtin_trap(), not assert(): this must survive NDEBUG and
           # PT_DEBUG=0, which are two of the configurations being checked.
           cat > ptcheck.h <<'EOF'
+          #include <stddef.h>
           static int pt_cs_depth ;
-          static inline int pt_cs_enter(void) { return pt_cs_depth++ ; }
+          /* a fake interrupt, fired at the pt_cs_irq_at'th point where
+           * interrupts are about to be masked; see test_interrupts() */
+          static void (*pt_cs_irq)(void) ;
+          static int pt_cs_irq_at ;
+          static inline int pt_cs_enter(void) {
+              if (pt_cs_depth == 0 && pt_cs_irq && --pt_cs_irq_at == 0) {
+                  void (*const irq)(void) = pt_cs_irq ;
+                  pt_cs_irq = NULL ;
+                  irq() ;
+              }
+              return pt_cs_depth++ ;
+          }
           static inline void pt_cs_exit(int saved) { pt_cs_depth = saved ; }
+          #define PT_TEST_IRQ 1
           #define PT_CRITICAL_T           int
           #define PT_CRITICAL_ENTER()     pt_cs_enter()
           #define PT_CRITICAL_EXIT(s)     pt_cs_exit(s)

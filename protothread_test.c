@@ -1313,6 +1313,118 @@ test_version(void)
 
 /******************************************************************************/
 
+/* Interrupt races. These need the critical-section harness from CI, which
+ * counts nesting depth and can fire a fake interrupt handler at the moment
+ * interrupts are about to be masked -- the only moment a real one can land.
+ */
+#ifdef PT_TEST_IRQ
+
+static int irq_ready_depth ;
+static int irq_ready_count ;
+
+static void
+irq_ready_function(env_t env)
+{
+    protothread_t const pt = env ;
+    pt_thread_t const * t = pt->ready ;
+
+    irq_ready_depth = pt_cs_depth ;
+    irq_ready_count = 0 ;
+    if (t) {
+        do {
+            irq_ready_count++ ;
+            t = t->next ;
+        } while (t != pt->ready) ;
+    }
+}
+
+typedef struct {
+    pt_thread_t pt_thread ;
+    pt_func_t pt_func ;
+    pt_timer_env_t timer_env ;
+    int done ;
+} irq_context_t ;
+
+static int irq_channel ;
+
+static pt_t
+irq_waiter_thr(env_t const env)
+{
+    irq_context_t * const c = env ;
+    pt_resume(c) ;
+    pt_wait(c, &irq_channel) ;
+    c->done = 1 ;
+    return PT_DONE ;
+}
+
+static protothread_t irq_pt ;
+static pt_timers_t irq_timers ;
+
+static pt_t
+irq_sleeper_thr(env_t const env)
+{
+    irq_context_t * const c = env ;
+    pt_resume(c) ;
+    pt_sleep(c, &c->timer_env, &irq_timers, 1) ;
+    c->done = 1 ;
+    return PT_DONE ;
+}
+
+static void
+irq_tick(void)
+{
+    pt_timer_run(irq_pt, &irq_timers, 1) ;
+}
+
+static void
+test_interrupts(void)
+{
+    int k ;
+
+    /* the ready function runs unmasked, after every waiter has been moved */
+    {
+        protothread_t const pt = protothread_create() ;
+        irq_context_t w[3] ;
+        int i ;
+
+        memset(w, 0, sizeof(w)) ;
+        for (i = 0; i < 3; i++) {
+            pt_create(pt, &w[i].pt_thread, irq_waiter_thr, &w[i]) ;
+        }
+        while (protothread_run(pt)) ;
+        protothread_set_ready_function(pt, irq_ready_function, pt) ;
+        pt_broadcast(pt, &irq_channel) ;
+        check(irq_ready_depth == 0) ;
+        check(irq_ready_count == 3) ;
+        while (protothread_run(pt)) ;
+        check(w[0].done && w[1].done && w[2].done) ;
+        protothread_free(pt) ;
+    }
+
+    /* a tick interrupt at any point during pt_sleep() is never lost */
+    for (k = 1; k <= 8; k++) {
+        irq_context_t c ;
+
+        memset(&c, 0, sizeof(c)) ;
+        irq_pt = protothread_create() ;
+        pt_timers_init(&irq_timers, 0) ;
+        pt_create(irq_pt, &c.pt_thread, irq_sleeper_thr, &c) ;
+        pt_cs_irq = irq_tick ;
+        pt_cs_irq_at = k ;
+        while (protothread_run(irq_pt)) ;
+        pt_cs_irq = NULL ;
+        /* later ticks, long after any deadline; a lost wakeup stays lost */
+        pt_timer_run(irq_pt, &irq_timers, 50) ;
+        while (protothread_run(irq_pt)) ;
+        check(c.done) ;
+        protothread_free(irq_pt) ;
+    }
+}
+
+#endif /* PT_TEST_IRQ */
+
+/******************************************************************************/
+
 int
 main()
 {
@@ -1334,6 +1446,9 @@ main()
     test_timer() ;
     test_join() ;
     test_version() ;
+#ifdef PT_TEST_IRQ
+    test_interrupts() ;
+#endif
 
     return 0 ;
 }

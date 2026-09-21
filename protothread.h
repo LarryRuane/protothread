@@ -329,21 +329,36 @@ pt_i_find_and_unlink(pt_thread_t ** const head, pt_thread_t * const n)
     return false ;
 }
 
-/* Unlike the list primitives above, this takes its own critical section:
- * it is reached both from thread context and from inside one. The ready
- * function is called outside, so it may do arbitrary work.
+/* Link a thread onto the ready list, and return whether the ready function
+ * should be called. The caller must already be in a critical section, and
+ * must call it only after leaving that section.
  */
+static inline bool_t
+pt_i_link_ready(protothread_t const s, pt_thread_t * const t)
+{
+    bool_t const notify = (s->ready_function && !s->ready && !s->running) ;
+    PT_CRITICAL_ASSERT() ;
+    pt_i_link(&s->ready, t) ;
+    return notify ;
+}
+
+/* the ready function should schedule protothread_run() */
+static inline void
+pt_i_notify_ready(protothread_t const s)
+{
+    s->ready_function(s->ready_env) ;
+}
+
+/* For callers that are not already in a critical section. */
 static inline void
 pt_i_add_ready(protothread_t const s, pt_thread_t * const t)
 {
     const pt_i_critical_t saved = PT_CRITICAL_ENTER() ;
-    const bool_t notify = (s->ready_function && !s->ready && !s->running) ;
-    pt_i_link(&s->ready, t) ;
+    const bool_t notify = pt_i_link_ready(s, t) ;
     PT_CRITICAL_EXIT(saved) ;
 
     if (notify) {
-        /* this should schedule protothread_run() */
-        s->ready_function(s->ready_env) ;
+        pt_i_notify_ready(s) ;
     }
 }
 
@@ -467,6 +482,26 @@ pt_i_enqueue_wait(pt_thread_t * const t, void * const channel)
         pt_i_debug_wait(env) ; \
         return PT_I_WAIT ; \
       PT_I_LABEL: ; \
+    } while (0)
+
+/* Like "while (cond) pt_wait(env, channel)", but the test and the enqueue
+ * share one critical section, so a wakeup from an interrupt handler can't
+ * land between them and be lost. For code the library's own interrupt-safe
+ * calls wake; ordinary protothread code should use the loop.
+ */
+#define pt_i_wait_while(env, channel, cond) \
+    do { \
+        pt_i_critical_t pt_i_saved ; \
+      PT_I_LABEL: \
+        pt_i_saved = PT_CRITICAL_ENTER() ; \
+        if (cond) { \
+            (env)->pt_func.label = &&PT_I_LABEL ; \
+            pt_i_enqueue_wait((env)->pt_func.thread, channel) ; \
+            PT_CRITICAL_EXIT(pt_i_saved) ; \
+            pt_i_debug_wait(env) ; \
+            return PT_I_WAIT ; \
+        } \
+        PT_CRITICAL_EXIT(pt_i_saved) ; \
     } while (0)
 
 /* Let other ready protothreads run, then resume this thread */
@@ -640,6 +675,7 @@ pt_i_wake(protothread_t const s, void * const channel, bool_t const wake_one)
     pt_thread_t ** const wq = pt_i_get_wait_list(s, channel) ;
     const pt_i_critical_t saved = PT_CRITICAL_ENTER() ;
     pt_thread_t * prev = *wq ;  /* one before the oldest waiting thread */
+    bool_t notify = false ;
 
     while (*wq) {
         pt_thread_t * const t = prev->next ;
@@ -653,7 +689,9 @@ pt_i_wake(protothread_t const s, void * const channel, bool_t const wake_one)
         } else {
             /* wake up this thread (link to the ready list) */
             pt_i_unlink(wq, prev) ;
-            pt_i_add_ready(s, t) ;
+            if (pt_i_link_ready(s, t)) {
+                notify = true ;
+            }
             if (wake_one) {
                 /* wake only the first found thread */
                 break ;
@@ -661,6 +699,11 @@ pt_i_wake(protothread_t const s, void * const channel, bool_t const wake_one)
         }
     }
     PT_CRITICAL_EXIT(saved) ;
+
+    /* only now, with every waiter moved and the caller's interrupt state */
+    if (notify) {
+        pt_i_notify_ready(s) ;
+    }
 }
 
 static inline void

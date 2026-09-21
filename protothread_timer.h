@@ -166,9 +166,8 @@ pt_i_sleep(pt_timer_env_t *c, pt_timers_t *timers, pt_time_t ticks)
     c->expired = false ;
     c->deadline = timers->now + ticks ;
     pt_i_timer_insert(timers, c) ;
-    while (!c->expired) {
-        pt_wait(c, c) ;
-    }
+    /* pt_timer_run() may be called from a tick interrupt */
+    pt_i_wait_while(c, c, !c->expired) ;
     return PT_DONE ;
 }
 
