@@ -245,7 +245,8 @@ main(int argc, char **argv)
     }
     protothread_deinit(&state) ;
 
-    printf("%d protothreads, no POSIX threads, checksum %ld (expected %ld): %s\n",
+    printf("%d protothreads, no POSIX threads, "
+           "checksum %ld (expected %ld): %s\n",
            NIO, checksum, expect,
            checksum == expect ? "OK" : "MISMATCH") ;
     return checksum != expect ;

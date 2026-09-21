@@ -21,35 +21,38 @@
  * call and rely on.
  *
  * The scheduler
- *   protothread_init(s)              initialize a protothread_t the caller allocated
- *   protothread_deinit(s)            check nothing is still scheduled (PT_DEBUG only)
+ *   protothread_init(s)              initialize a protothread_t you allocated
+ *   protothread_deinit(s)            check nothing is scheduled (PT_DEBUG only)
  *   protothread_create()             allocate and initialize one (needs malloc)
  *   protothread_free(s)              deinitialize and free it
- *   protothread_run(s)               run one ready protothread; true if more remain
+ *   protothread_run(s)               run one protothread; true if more to run
  *   protothread_set_ready_function(s, f, env)
  *                                    called when the run list becomes non-empty
  *
  * Inside a protothread function; c is the context, and all of these are macros
- *   pt_resume(c)                     first statement of every protothread function
+ *   pt_resume(c)                     first statement of a protothread function
  *   pt_wait(c, channel)              block until channel is signalled
- *   pt_yield(c)                      let other ready protothreads run, then continue
+ *   pt_yield(c)                      let other ready protothreads run first
  *   pt_call(c, func, child_c, ...)   call a protothread function that may block
  *   pt_call_waited(c)                did that pt_call() block?
  *   pt_join(c, thread)               block until that protothread has exited
- *   pt_reset(c)                      forget the resume point; start again from the top
- *   pt_get_pt(c)                     the protothread_t this protothread belongs to
- *   PT_DONE                          the value a protothread function returns when done
+ *   pt_reset(c)                      clear the resume point; start from the top
+ *   pt_get_pt(c)                     the protothread_t this one belongs to
+ *   PT_DONE                          returned when a protothread is finished
  *
  * Creating, waking and killing
  *   pt_create(s, thread, func, env)  create a protothread and make it ready
  *   pt_signal(s, channel)            make the oldest waiter on channel ready
  *   pt_broadcast(s, channel)         make every waiter on channel ready
- *   pt_kill(thread)                  unschedule one; true if it was still scheduled
+ *   pt_kill(thread)                  unschedule one; true if it was scheduled
  *   pt_is_alive(thread)              has it not yet exited or been killed?
  *
- * Types            protothread_t, pt_thread_t, pt_func_t, pt_t, pt_f_t, env_t, bool_t
- * Configuration    PT_DEBUG, PT_NWAIT, PT_NO_MALLOC, PT_CRITICAL_*, PT_SIGNAL_WAKES_ALL, pt_assert
- * Version          PT_VERSION_{MAJOR,MINOR,PATCH,NUMBER,STRING}, PT_VERSION_AT_LEAST
+ * Types            protothread_t, pt_thread_t, pt_func_t, pt_t, pt_f_t,
+ *                  env_t, bool_t
+ * Configuration    PT_DEBUG, PT_NWAIT, PT_NO_MALLOC, PT_CRITICAL_*,
+ *                  PT_SIGNAL_WAKES_ALL, pt_assert
+ * Version          PT_VERSION_{MAJOR,MINOR,PATCH,NUMBER,STRING},
+ *                  PT_VERSION_AT_LEAST
  * Companions       protothread_sem.h, protothread_lock.h, protothread_timer.h
  */
 
@@ -110,7 +113,8 @@ typedef void * env_t ;
 #error PT_NWAIT must be a power of two, and at least 1
 #endif
 /* The wait-list index is taken from the top half of a product (see
- * pt_i_get_wait_list()), so a larger table would leave its upper buckets unused.
+ * pt_i_get_wait_list()), so a larger table would leave its upper buckets
+ * unused.
  */
 #if (PT_NWAIT) > 1 && ((PT_NWAIT) - 1) > UINTPTR_MAX / ((PT_NWAIT) - 1)
 #error PT_NWAIT is too large for this pointer width
@@ -158,7 +162,9 @@ typedef PT_CRITICAL_T pt_i_critical_t ;
 #define PT_CRITICAL_ASSERT() do { } while (0)
 #endif
 
-/* Define as 1 to make pt_signal() wake every waiter; correct code must still work. */
+/* Define as 1 to make pt_signal() wake every waiter; correct code must still
+ * work.
+ */
 #ifndef PT_SIGNAL_WAKES_ALL
 #define PT_SIGNAL_WAKES_ALL 0
 #endif
@@ -197,11 +203,11 @@ typedef struct pt_thread_s pt_thread_t ;
  * the overall system.
  */
 typedef struct protothread_s {
-    void (*ready_function)(env_t) ; /* function to call when a thread becomes ready */
-    env_t ready_env ;               /* environment to pass to ready_function() */
-    pt_thread_t *running ;          /* current running protothread (if non-NULL) */
+    void (*ready_function)(env_t) ; /* called when a thread becomes ready */
+    env_t ready_env ;               /* passed to ready_function() */
+    pt_thread_t *running ;          /* the running protothread, or NULL */
     pt_thread_t *ready ;            /* ready to run list (points to newest) */
-    pt_thread_t *wait[PT_NWAIT] ;   /* waiting for an event (points to newest) */
+    pt_thread_t *wait[PT_NWAIT] ;   /* wait lists (each points to newest) */
 } *protothread_t ;
 
 
@@ -383,7 +389,7 @@ pt_i_enqueue_yield(pt_thread_t * const t)
     pt_i_add_ready(s, t) ;
 }
 
-/* The golden ratio scaled to the pointer width; a small target multiplies small. */
+/* The golden ratio at pointer width, so a small target multiplies small. */
 #if UINTPTR_MAX > 0xffffffffu
 #define PT_I_HASH_MULT ((uintptr_t)0x9e3779b97f4a7c15u)
 #elif UINTPTR_MAX > 0xffffu
@@ -563,7 +569,8 @@ protothread_free(protothread_t const s)
 }
 #endif /* PT_NO_MALLOC */
 
-static inline void pt_i_wake(protothread_t const s, void * const channel, bool_t const wake_one) ;
+static inline void
+pt_i_wake(protothread_t const s, void * const channel, bool_t const wake_one) ;
 
 static inline bool_t
 protothread_run(protothread_t const s)
@@ -607,7 +614,7 @@ protothread_run(protothread_t const s)
     return s->ready != NULL ;
 }
 
-/* Set a function to call when a protothread becomes ready. 
+/* Set a function to call when a protothread becomes ready.
  * This is optional. The passed function will generally
  * schedule a function that will call prothread_run() repeatedly
  * until it returns FALSE (or, if it limits the number of calls
@@ -615,7 +622,10 @@ protothread_run(protothread_t const s)
  * must reschedule itself).
  */
 static inline void
-protothread_set_ready_function(protothread_t const s, void (*f)(env_t), env_t env)
+protothread_set_ready_function(
+        protothread_t const s,
+        void (*f)(env_t),
+        env_t env)
 {
     s->ready_function = f ;
     s->ready_env = env ;

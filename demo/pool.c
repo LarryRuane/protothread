@@ -207,7 +207,8 @@ main(void)
     }
     protothread_deinit(&state) ;
 
-    printf("%d protothreads, %d worker threads, checksum %ld (expected %ld): %s\n",
+    printf("%d protothreads, %d worker threads, "
+           "checksum %ld (expected %ld): %s\n",
            NJOBS, NWORKERS, checksum, expect,
            checksum == expect ? "OK" : "MISMATCH") ;
     return checksum != expect ;

@@ -13,12 +13,12 @@
 #include "protothread.h"
 
 /* Reader-writer lock. The public API; pt_i_ names are internal.
- *   pt_lock_init(lock)                          initialize an unheld lock
- *   pt_lock_acquire_read(c, lock_env, lock)     block until read access is granted
- *   pt_lock_acquire_write(c, lock_env, lock)    block until exclusive access is granted
- *   pt_lock_release_read(lock_env, lock)        release; never blocks
- *   pt_lock_release_write(lock_env, lock)       release; never blocks
- *   pt_lock_t, pt_lock_env_t                    the lock, and one env per waiter
+ *   pt_lock_init(lock)                        initialize an unheld lock
+ *   pt_lock_acquire_read(c, lock_env, lock)   block for shared (read) access
+ *   pt_lock_acquire_write(c, lock_env, lock)  block for exclusive access
+ *   pt_lock_release_read(lock_env, lock)      release; never blocks
+ *   pt_lock_release_write(lock_env, lock)     release; never blocks
+ *   pt_lock_t, pt_lock_env_t                  the lock, and one env per waiter
  */
 
 typedef enum {
@@ -41,9 +41,9 @@ typedef struct pt_lock_env_s {
  * steady stream of readers cannot starve a waiting writer.
  */
 typedef struct pt_lock_s {
-    unsigned int nreaders ;             /* number of current readers */
-    unsigned int nwriters ;             /* number of current writers (zero or 1) */
-    pt_lock_env_t *waiting ;            /* newest waiting thread (environment) */
+    unsigned int nreaders ;             /* current readers */
+    unsigned int nwriters ;             /* current writers, 0 or 1 */
+    pt_lock_env_t *waiting ;            /* newest waiter's environment */
 } pt_lock_t ;
 
 static inline void
@@ -105,7 +105,8 @@ pt_i_lock_update(pt_lock_t *lock)
             return ;
         }
         /* start the first and every consecutive additional reader */
-        while ((w = pt_i_lock_oldest(lock)) != NULL && w->state == PT_I_LOCK_READ) {
+        while ((w = pt_i_lock_oldest(lock)) != NULL
+                && w->state == PT_I_LOCK_READ) {
             lock->nreaders ++ ;
             pt_i_lock_dequeue(lock) ;
             w->state = PT_I_LOCK_READING ;

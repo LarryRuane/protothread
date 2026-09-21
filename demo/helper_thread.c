@@ -177,7 +177,8 @@ main(void)
     close(notify[1]) ;
     protothread_deinit(&state) ;
 
-    printf("%d protothreads, one helper thread each, checksum %ld (expected %ld): %s\n",
+    printf("%d protothreads, one helper thread each, "
+           "checksum %ld (expected %ld): %s\n",
            NREQ, checksum, expect,
            checksum == expect ? "OK" : "MISMATCH") ;
     return checksum != expect ;

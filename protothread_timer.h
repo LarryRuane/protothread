@@ -12,13 +12,13 @@
 #include "protothread.h"
 
 /* Sleeping. The public API; pt_i_ names are internal.
- *   pt_timers_init(timers, now)                 initialize a timer set
- *   pt_sleep(c, timer_env, timers, ticks)       block for <ticks> of your clock
- *   pt_timer_run(s, timers, now)                wake everything now due; call on a tick
- *   pt_timer_cancel(timers, timer_env)          wake a sleeper early; true if pending
- *   pt_timer_next(timers, deadline)             soonest deadline, for an idle loop
- *   pt_time_after(a, b)                         wraparound-safe time comparison
- *   pt_timers_t, pt_timer_env_t, pt_time_t      the set, one env per sleeper, the clock
+ *   pt_timers_init(timers, now)             initialize a timer set
+ *   pt_sleep(c, timer_env, timers, ticks)   block for <ticks> of your clock
+ *   pt_timer_run(s, timers, now)            wake all now due; call on a tick
+ *   pt_timer_cancel(timers, timer_env)      end a sleep early; true if pending
+ *   pt_timer_next(timers, deadline)         soonest deadline, for an idle loop
+ *   pt_time_after(a, b)                     wraparound-safe time comparison
+ *   pt_timers_t, pt_timer_env_t, pt_time_t  set, env per sleeper, clock
  */
 
 /* Sleeping for a while.

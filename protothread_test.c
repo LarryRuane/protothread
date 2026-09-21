@@ -15,7 +15,8 @@
  */
 #define check(cond) do { \
     if (!(cond)) { \
-        fprintf(stderr, "%s:%d: check failed: %s\n", __FILE__, __LINE__, #cond) ; \
+        fprintf(stderr, "%s:%d: check failed: %s\n", \
+                __FILE__, __LINE__, #cond) ; \
         abort() ; \
     } \
 } while (0)
@@ -269,7 +270,7 @@ test_broadcast(void)
         /* make sure every tread that should have run did run */
         for (j = 0; j < N; j++) {
             check(!gc.c[j].run) ;
-        } 
+        }
     }
     gc.done = true ;
     for (j = 0; j < N; j++) {
@@ -298,7 +299,7 @@ typedef struct pc_thread_context_s {
 
 #define N 1000
 
-/* The producer thread waits until the mailbox is empty, and then writes 
+/* The producer thread waits until the mailbox is empty, and then writes
  * the next value to the mailbox and pokes the consumer.
  */
 static pt_t
@@ -415,7 +416,7 @@ test_pc_big(void)
 typedef struct recursive_call_global_context_s {
     bool_t seen[NODES] ;
     int nseen ;
-    struct recursive_call_context_s * all ;   /* every context, freed at the end */
+    struct recursive_call_context_s * all ;   /* every context, freed last */
 } recursive_call_global_context_t ;
 
 typedef struct recursive_call_context_s {
@@ -458,7 +459,8 @@ recursive_thr(env_t const env)
         pt_call(c, recursive_thr, c->child_c) ;
     } else {
         /* once in a while create a new thread (asynchronous) */
-        pt_create(pt_get_pt(c), &c->child_c->pt_thread, recursive_thr, c->child_c) ;
+        pt_create(pt_get_pt(c), &c->child_c->pt_thread,
+                  recursive_thr, c->child_c) ;
     }
     pt_wait(c, &gc->seen[rand() % CHANS]) ;
 
@@ -473,7 +475,8 @@ recursive_thr(env_t const env)
     if ((rand() % 4)) {
         pt_call(c, recursive_thr, c->child_c) ;
     } else {
-        pt_create(pt_get_pt(c), &c->child_c->pt_thread, recursive_thr, c->child_c) ;
+        pt_create(pt_get_pt(c), &c->child_c->pt_thread,
+                  recursive_thr, c->child_c) ;
     }
 
     return PT_DONE ;
@@ -1158,7 +1161,7 @@ test_timer(void)
     check(pt_time_after(10, 5)) ;
     check(!pt_time_after(5, 10)) ;
     check(!pt_time_after(5, 5)) ;
-    check(pt_time_after(5, (pt_time_t)-5)) ;        /* 5 is after -5 across the wrap */
+    check(pt_time_after(5, (pt_time_t)-5)) ; /* 5 is after -5 across the wrap */
     check(!pt_time_after((pt_time_t)-5, 5)) ;
 }
 
@@ -1219,7 +1222,7 @@ join_joiner_thr(env_t const env)
     return PT_DONE ;
 }
 
-/* bounded, so a join that never returns fails the suite instead of hanging it */
+/* bounded, so a join that never returns fails the suite rather than hangs */
 static void
 join_drain(protothread_t pt)
 {
@@ -1259,7 +1262,9 @@ test_join(void)
     check(j1.joined) ;
 
     /* two joiners on one target */
-    memset(&w, 0, sizeof(w)) ; memset(&j1, 0, sizeof(j1)) ; memset(&j2, 0, sizeof(j2)) ;
+    memset(&w, 0, sizeof(w)) ;
+    memset(&j1, 0, sizeof(j1)) ;
+    memset(&j2, 0, sizeof(j2)) ;
     pt_create(pt, &w.pt_thread, join_worker_thr, &w) ;
     j1.target = &w ;
     j2.target = &w ;
@@ -1296,10 +1301,13 @@ test_version(void)
     check(strcmp(buf, PT_VERSION_STRING) == 0) ;
 
     check(PT_VERSION_NUMBER ==
-          PT_VERSION_MAJOR * 10000 + PT_VERSION_MINOR * 100 + PT_VERSION_PATCH) ;
+          PT_VERSION_MAJOR * 10000
+          + PT_VERSION_MINOR * 100
+          + PT_VERSION_PATCH) ;
 
     check(PT_VERSION_AT_LEAST(0, 0, 0)) ;
-    check(PT_VERSION_AT_LEAST(PT_VERSION_MAJOR, PT_VERSION_MINOR, PT_VERSION_PATCH)) ;
+    check(PT_VERSION_AT_LEAST(
+        PT_VERSION_MAJOR, PT_VERSION_MINOR, PT_VERSION_PATCH)) ;
     check(!PT_VERSION_AT_LEAST(PT_VERSION_MAJOR + 1, 0, 0)) ;
 }
 

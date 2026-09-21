@@ -42,7 +42,8 @@ pt_i_sem_acquire(pt_sem_env_t *c, unsigned int *value)
     (*value) -- ;
     return PT_DONE ;
 }
-#define pt_sem_acquire(c, sem_env, value) pt_call(c, pt_i_sem_acquire, sem_env, value)
+#define pt_sem_acquire(c, sem_env, value) \
+    pt_call(c, pt_i_sem_acquire, sem_env, value)
 
 /* guaranteed not to break context */
 static inline void
