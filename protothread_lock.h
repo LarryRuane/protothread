@@ -39,6 +39,9 @@ typedef struct pt_lock_env_s {
  * so waiting->next is the oldest -- the same convention protothread.h uses
  * for its run and wait lists. Requests are granted in arrival order, so a
  * steady stream of readers cannot starve a waiting writer.
+ *
+ * Never pt_kill() a protothread waiting for a lock: its request stays in
+ * this queue and is eventually granted to a thread that can't release it.
  */
 typedef struct pt_lock_s {
     unsigned int nreaders ;             /* current readers */

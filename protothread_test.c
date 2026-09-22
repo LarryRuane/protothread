@@ -1376,6 +1376,24 @@ irq_tick(void)
     pt_timer_run(irq_pt, &irq_timers, 1) ;
 }
 
+static irq_context_t irq_target ;
+
+static pt_t
+irq_joiner_thr(env_t const env)
+{
+    irq_context_t * const c = env ;
+    pt_resume(c) ;
+    pt_join(c, &irq_target.pt_thread) ;
+    c->done = 1 ;
+    return PT_DONE ;
+}
+
+static void
+irq_kill(void)
+{
+    (void)pt_kill(&irq_target.pt_thread) ;
+}
+
 static void
 test_interrupts(void)
 {
@@ -1417,6 +1435,27 @@ test_interrupts(void)
         pt_timer_run(irq_pt, &irq_timers, 50) ;
         while (protothread_run(irq_pt)) ;
         check(c.done) ;
+        protothread_free(irq_pt) ;
+    }
+
+    /* a pt_kill() interrupt at any point during pt_join() is never lost */
+    for (k = 1; k <= 8; k++) {
+        irq_context_t j ;
+
+        memset(&irq_target, 0, sizeof(irq_target)) ;
+        memset(&j, 0, sizeof(j)) ;
+        irq_pt = protothread_create() ;
+        pt_create(irq_pt, &irq_target.pt_thread, irq_waiter_thr, &irq_target) ;
+        while (protothread_run(irq_pt)) ;           /* target is now waiting */
+        pt_create(irq_pt, &j.pt_thread, irq_joiner_thr, &j) ;
+        pt_cs_irq = irq_kill ;
+        pt_cs_irq_at = k ;
+        while (protothread_run(irq_pt)) ;
+        pt_cs_irq = NULL ;
+        /* if the interrupt never fired, kill from thread context instead */
+        (void)pt_kill(&irq_target.pt_thread) ;
+        while (protothread_run(irq_pt)) ;
+        check(j.done) ;
         protothread_free(irq_pt) ;
     }
 }

@@ -156,6 +156,13 @@ debugging into a one-line call, and costs nothing in a production build.
     went away once the multiplier was sized to `uintptr_t`, so a 16-bit target
     does a 16-bit multiply, and at `PT_NWAIT=1` the mask is zero and both gcc
     and clang drop the multiply entirely.
+  * **`pt_lock_cancel()`.** A protothread waiting for a reader-writer lock
+    can't safely be `pt_kill()`ed: its request stays in the lock's queue and
+    is eventually granted to a thread that will never release it, wedging the
+    lock. The README says not to do it. The timer has `pt_timer_cancel()` for
+    the same situation, and a lock equivalent would remove the request and
+    re-run the grant logic, since a queued writer at the head may be all that
+    was holding back the readers behind it.
   * **A payload in `pt_t`.** `pt_t` is already a struct wrapping the return
     enum, so adding an `intptr_t` would let a child protothread return one word
     directly. It would actually work: only the final `PT_DONE` return reaches a

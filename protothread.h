@@ -139,7 +139,8 @@ typedef void * env_t ;
  *   #define PT_CRITICAL_EXIT(s) __set_PRIMASK(s)
  *
  * The critical sections are short and O(1), except that pt_signal(),
- * pt_broadcast() and pt_kill() walk one wait list.
+ * pt_broadcast() and pt_kill() walk one wait list, and pt_sleep() and
+ * pt_timer_cancel() walk the timer list.
  */
 #ifndef PT_CRITICAL_T
 #define PT_CRITICAL_T int
@@ -531,13 +532,13 @@ pt_i_enqueue_wait(pt_thread_t * const t, void * const channel)
 /* Did the most recent pt_call() block (break context)? */
 #define pt_call_waited(env) ((env)->pt_func.label != NULL)
 
-/* Block until the given protothread has exited or been killed. */
+/* Block until the given protothread has exited or been killed. pt_kill()
+ * may be called from an interrupt handler, hence pt_i_wait_while().
+ */
 #define pt_join(env, thr) \
     do { \
         pt_assert((thr) != (env)->pt_func.thread) ; \
-        while (pt_is_alive(thr)) { \
-            pt_wait(env, thr) ; \
-        } \
+        pt_i_wait_while(env, thr, pt_is_alive(thr)) ; \
     } while (0)
 
 #define pt_create(pt, thr, func, env) \

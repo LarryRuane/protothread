@@ -684,7 +684,7 @@ static inline uint32_t pt_critical_enter(void) {
 #define PT_CRITICAL_EXIT(s) __set_PRIMASK(s)
 ```
 
-The critical sections are short and O(1), except that `pt_signal()`, `pt_broadcast()` and `pt_kill()` walk one wait list. If interrupt latency is critical, keep `PT_NWAIT` large enough that wait lists stay short, or have the interrupt handler set a flag that the main loop turns into a `pt_signal()` at a safe point.
+The critical sections are short and O(1), except that `pt_signal()`, `pt_broadcast()` and `pt_kill()` walk one wait list, and `pt_sleep()` and `pt_timer_cancel()` walk the timer list. If interrupt latency is critical, keep `PT_NWAIT` large enough that wait lists stay short, or have the interrupt handler set a flag that the main loop turns into a `pt_signal()` at a safe point.
 
 ## Compiler requirements ##
 
@@ -787,7 +787,7 @@ What matters is overlap, not which thread: before the scheduler first runs there
 
 > `bool_t pt_kill(pt_thread_t *)`
 >
-> Remove a thread from whatever list it is on, so that it is never scheduled again. Returns TRUE if the thread was found (it is not an error to kill a thread that has already exited). This is dangerous unless the thread was written to expect it: the thread is stopped wherever it happens to be blocked, and any resources it holds -- allocated contexts, semaphores, locks -- are not released. Do not call this on the currently running thread. Any cleanup is up to the caller, once this has returned TRUE.
+> Remove a thread from whatever list it is on, so that it is never scheduled again. Returns TRUE if the thread was found (it is not an error to kill a thread that has already exited). This is dangerous unless the thread was written to expect it: the thread is stopped wherever it happens to be blocked, and any resources it holds -- allocated contexts, semaphores, locks -- are not released. Two places it can be blocked need something done first. A sleeping thread must be taken off the timer list with `pt_timer_cancel()`. A thread waiting for a reader-writer lock must not be killed at all: it stays in the lock's queue, and when its turn comes the lock is granted to it and never released, so every later request waits forever. A thread waiting on a semaphore is safe to kill. Do not call this on the currently running thread. Any cleanup is up to the caller, once this has returned TRUE.
 
 ### Protothread system setup and teardown ###
 
@@ -879,7 +879,7 @@ This implementation is deliberately not fair. Releasing the semaphore wakes the 
 
 > `bool_t pt_timer_cancel(pt_timers_t *timers, pt_timer_env_t *timer_env)`
 >
-> Remove a sleeper early; returns TRUE if it was still pending. Call this before `pt_kill()`ing or freeing a protothread that might be sleeping, otherwise the timer list will retain a dangling entry.
+> Take a sleeper off the timer list; returns TRUE if it was still pending. This does **not** wake it: the protothread stays blocked in `pt_sleep()`. It's for use before `pt_kill()`ing or freeing a protothread that might be sleeping, since otherwise the timer list keeps a dangling entry.
 
 The clock type is `PT_TIME_T` (default `uint32_t`), paired with the signed `PT_TIME_DIFF_T` (default `int32_t`). **Counter wraparound is handled correctly**: comparisons use a signed difference rather than a direct `>`, so a 32-bit millisecond clock behaves properly across its 49-day rollover. The one requirement is that no live deadline be more than half the counter range in the future -- about 24 days for that clock.
 
@@ -928,7 +928,7 @@ for (;;) {
 >
 > Release the lock. Guaranteed not to block.
 
-Requests are granted in arrival order, so a steady stream of readers cannot starve a waiting writer. Consecutive readers at the head of the queue are all started together. Unlike the semaphore, the lock is fair: a release hands it directly to the next request before waking it, so a protothread that releases and immediately reacquires waits its turn. The cost is the convoy described above.
+Requests are granted in arrival order, so a steady stream of readers cannot starve a waiting writer. Consecutive readers at the head of the queue are all started together. Unlike the semaphore, the lock is fair: a release hands it directly to the next request before waking it, so a protothread that releases and immediately reacquires waits its turn. The cost is the convoy described above. The same queue is why a protothread waiting for the lock must never be `pt_kill()`ed: its request stays queued, and is eventually granted to a thread that will never release it.
 
 There's no upgrade call, because you don't need one. Release the read lock, acquire the write lock, and ask whether that blocked:
 

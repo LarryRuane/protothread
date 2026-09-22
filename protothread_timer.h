@@ -15,7 +15,7 @@
  *   pt_timers_init(timers, now)             initialize a timer set
  *   pt_sleep(c, timer_env, timers, ticks)   block for <ticks> of your clock
  *   pt_timer_run(s, timers, now)            wake all now due; call on a tick
- *   pt_timer_cancel(timers, timer_env)      end a sleep early; true if pending
+ *   pt_timer_cancel(timers, timer_env)      forget a sleeper; true if pending
  *   pt_timer_next(timers, deadline)         soonest deadline, for an idle loop
  *   pt_time_after(a, b)                     wraparound-safe time comparison
  *   pt_timers_t, pt_timer_env_t, pt_time_t  set, env per sleeper, clock
@@ -94,8 +94,9 @@ pt_i_timer_insert(pt_timers_t *timers, pt_timer_env_t *c)
     PT_CRITICAL_EXIT(saved) ;
 }
 
-/* Remove a sleeper early; returns TRUE if it was still pending. Needed
- * before freeing or pt_kill()ing a protothread that might be sleeping.
+/* Take a sleeper off the list WITHOUT waking it; it stays blocked. Returns
+ * TRUE if it was still pending. Needed before freeing or pt_kill()ing a
+ * protothread that might be sleeping.
  */
 static inline bool_t
 pt_timer_cancel(pt_timers_t *timers, pt_timer_env_t *c)
