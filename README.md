@@ -56,7 +56,7 @@ cmake -S . -B build && cmake --build build && ./build/pttest
 
 ### The API ###
 
-The core is twenty entries in the following two tables, all in `protothread.h`. The `protothread_` prefix is used for operations on the overall protothread object; the `pt_` prefix is for operations involving specific protothreads. Everything else in `protothread.h` is internal and has a `pt_i_` or `PT_I_` prefix, so anything *without* one of those prefixes is API you can rely on, and anything with one may change in a later release.
+The core is twenty-one entries in the following two tables, all in `protothread.h`. The `protothread_` prefix is used for operations on the overall protothread object; the `pt_` prefix is for operations involving specific protothreads. Everything else in `protothread.h` is internal and has a `pt_i_` or `PT_I_` prefix, so anything *without* one of those prefixes is API you can rely on, and anything with one may change in a later release.
 
 **The scheduler**
 
@@ -80,6 +80,7 @@ The core is twenty entries in the following two tables, all in `protothread.h`. 
 |---|---|
 | `pt_resume(c)` | first statement of every protothread function |
 | `pt_wait(c, channel)` | block until `channel` is signalled |
+| `pt_wait_until(c, channel, cond)` | the same, but safe against an interrupt handler |
 | `pt_yield(c)` | let other ready protothreads run, then continue |
 | `pt_call(c, func, child_c, ...)` | call a protothread function that may block |
 | `pt_call_waited(c)` | did that `pt_call()` block? |
@@ -300,9 +301,19 @@ Note the wording: "lists stay intact" is not the same as "correct". There is a s
         pt_wait(c, job)    <--- enqueues, and sleeps forever
 ```
 
-The predicate test and `pt_wait()`'s enqueue are not atomic with respect to another context, and your code can't make them so with a critical section, because `pt_wait()` returns from the function in between. (The library's own `pt_sleep()` does it internally, which is what makes `pt_timer_run()` safe to call from an interrupt.) Among protothreads this race cannot happen -- nothing runs in between -- which is exactly why it is easy to overlook when an interrupt handler is added later.
+The predicate test and `pt_wait()`'s enqueue are not atomic with respect to another context, and writing them as two statements can't make them so, because `pt_wait()` returns from the function in between. Among protothreads this race cannot happen -- nothing runs in between -- which is exactly why it is easy to overlook when an interrupt handler is added later.
 
-The fix is to not signal from the outside at all. Have the handler record what happened -- set a flag, push onto a queue -- and have the loop that owns `protothread_run()` turn that into a `pt_signal()` **between** protothread runs. At that point no protothread is mid-execution, so every waiter has finished enqueuing:
+There are two ways out, and they can be mixed.
+
+**Wait with `pt_wait_until()`**, which does the test and the enqueue inside one critical section, so an interrupt landing between them finds the protothread already enqueued:
+
+```c
+pt_wait_until(c, job, job->done);
+```
+
+That needs `PT_CRITICAL_*` defined, and the handler must set `job->done` before it signals. The library uses this for its own two cases, which is what makes `pt_timer_run()` safe to call from a tick interrupt and `pt_kill()` safe against a protothread waiting in `pt_join()`.
+
+**Or don't signal from the outside at all.** Have the handler record what happened -- set a flag, push onto a queue -- and have the loop that owns `protothread_run()` turn that into a `pt_signal()` **between** protothread runs. At that point no protothread is mid-execution, so every waiter has finished enqueuing:
 
 ```c
 for (;;) {
@@ -318,7 +329,7 @@ for (;;) {
 
 Check for work with interrupts masked before waiting. Otherwise an interrupt that lands after the last check but before `wait_for_interrupt()` is serviced right there, and the loop sleeps until some later interrupt with work already waiting. On Cortex-M, `__WFI()` with `PRIMASK` set still wakes for a pending interrupt, which is what makes this work, and most other cores have an equivalent.
 
-`demo/pool.c` is a complete working program built this way, and `demo/helper_thread.c` uses a self-pipe to the same end. A pleasant side effect: if signals are only ever raised from the scheduler's own context, the lists are never touched concurrently and `PT_CRITICAL_*` is not needed at all.
+`demo/pool.c` is a complete working program built this way, and `demo/helper_thread.c` uses a self-pipe to the same end. A pleasant side effect: if signals are only ever raised from the scheduler's own context, the lists are never touched concurrently and `PT_CRITICAL_*` is not needed at all. That is the reason to prefer this one where it fits; `pt_wait_until()` is for when the handler really must signal.
 
 ## How does it work? ##
 
@@ -739,6 +750,10 @@ These are macros (designed to look and act like function calls) whose first argu
 >
 > Block until a signal is sent to the given channel. The channel is an arbitrary `void *` value which is usually chosen to be the address of a data structure whose state change the thread is interested. A channel itself has no state; the protothread system never uses the channel as an address (does not dereference it). Typically, after this function returns the condition being waited for is re-evaluated. Analogous to [POSIX pthread\_cond\_wait()](http://www.opengroup.org/onlinepubs/009695399/functions/pthread_cond_wait.html).
 
+> `void pt_wait_until(struct context_t *c, void *channel, cond)`
+>
+> Block until `cond` is true, testing it and enqueueing on `channel` in one critical section. That is the difference from `while (!cond) pt_wait(c, channel)`, where an interrupt handler that makes `cond` true and signals in between is missed, and the protothread blocks forever; see [Lost wakeups](#lost-wakeups). `cond` is evaluated more than once, so it must have no side effects, and a handler must write whatever makes it true *before* it signals. Between protothreads the two forms are equivalent, since nothing runs in between.
+
 > `void pt_yield(struct context_t *c)`
 >
 > Reschedule the current thread and release the CPU. It is like `pt_wait()` on a channel that is immediately signaled. The current thread queues itself behind all ready to run threads and returns control to the scheduler.
@@ -787,7 +802,7 @@ What matters is overlap, not which thread: before the scheduler first runs there
 
 > `bool_t pt_kill(pt_thread_t *)`
 >
-> Remove a thread from whatever list it is on, so that it is never scheduled again. Returns TRUE if the thread was found (it is not an error to kill a thread that has already exited). This is dangerous unless the thread was written to expect it: the thread is stopped wherever it happens to be blocked, and any resources it holds -- allocated contexts, semaphores, locks -- are not released. Two places it can be blocked need something done first. A sleeping thread must be taken off the timer list with `pt_timer_cancel()`. A thread waiting for a reader-writer lock must not be killed at all: it stays in the lock's queue, and when its turn comes the lock is granted to it and never released, so every later request waits forever. A thread waiting on a semaphore is safe to kill. Do not call this on the currently running thread. Any cleanup is up to the caller, once this has returned TRUE.
+> Remove a thread from whatever list it is on, so that it is never scheduled again. Returns TRUE if the thread was found (it is not an error to kill a thread that has already exited). This is dangerous unless the thread was written to expect it: the thread is stopped wherever it happens to be blocked, and any resources it holds -- allocated contexts, semaphores, locks -- are not released. Two places it can be blocked need something done first. A sleeping thread must be taken off the timer list with `pt_timer_cancel()`. A thread that might be using a reader-writer lock must be taken out of it with `pt_lock_cancel()`, whether it is queued for the lock or holding it; otherwise the lock is eventually granted to a thread that never releases it, and every later request waits forever. A thread waiting on a semaphore is safe to kill. Do not call this on the currently running thread. Any cleanup is up to the caller, once this has returned TRUE.
 
 ### Protothread system setup and teardown ###
 
@@ -928,7 +943,11 @@ for (;;) {
 >
 > Release the lock. Guaranteed not to block.
 
-Requests are granted in arrival order, so a steady stream of readers cannot starve a waiting writer. Consecutive readers at the head of the queue are all started together. Unlike the semaphore, the lock is fair: a release hands it directly to the next request before waking it, so a protothread that releases and immediately reacquires waits its turn. The cost is the convoy described above. The same queue is why a protothread waiting for the lock must never be `pt_kill()`ed: its request stays queued, and is eventually granted to a thread that will never release it.
+> `bool_t pt_lock_cancel(pt_lock_env_t *lock_env, pt_lock_t *lock)`
+>
+> Take a request out of the lock, whether it is still queued or already granted, and start whatever that lets proceed. Returns TRUE if the lock still knew about the request. This does **not** wake the protothread, so it is for use before `pt_kill()`ing or freeing one that might be using the lock, exactly as `pt_timer_cancel()` is for one that might be sleeping. Guaranteed not to block.
+
+Requests are granted in arrival order, so a steady stream of readers cannot starve a waiting writer. Consecutive readers at the head of the queue are all started together. Unlike the semaphore, the lock is fair: a release hands it directly to the next request before waking it, so a protothread that releases and immediately reacquires waits its turn. The cost is the convoy described above. The same queue is why a protothread that might be using the lock needs `pt_lock_cancel()` before it is killed or freed: its request would otherwise stay queued, and be granted to a thread that never releases it.
 
 There's no upgrade call, because you don't need one. Release the read lock, acquire the write lock, and ask whether that blocked:
 

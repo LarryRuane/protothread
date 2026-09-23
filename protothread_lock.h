@@ -18,10 +18,12 @@
  *   pt_lock_acquire_write(c, lock_env, lock)  block for exclusive access
  *   pt_lock_release_read(lock_env, lock)      release; never blocks
  *   pt_lock_release_write(lock_env, lock)     release; never blocks
+ *   pt_lock_cancel(lock_env, lock)            forget a request; true if known
  *   pt_lock_t, pt_lock_env_t                  the lock, and one env per waiter
  */
 
 typedef enum {
+    PT_I_LOCK_IDLE,             /* zeroed or released: lock has no record */
     PT_I_LOCK_READ,
     PT_I_LOCK_WRITE,
     PT_I_LOCK_READING,
@@ -40,8 +42,9 @@ typedef struct pt_lock_env_s {
  * for its run and wait lists. Requests are granted in arrival order, so a
  * steady stream of readers cannot starve a waiting writer.
  *
- * Never pt_kill() a protothread waiting for a lock: its request stays in
- * this queue and is eventually granted to a thread that can't release it.
+ * Before pt_kill()ing or freeing a protothread that might be using a lock,
+ * call pt_lock_cancel(): otherwise its request stays in this queue and is
+ * eventually granted to a thread that can't release it.
  */
 typedef struct pt_lock_s {
     unsigned int nreaders ;             /* current readers */
@@ -75,6 +78,30 @@ pt_i_lock_enqueue(pt_lock_t *lock, pt_lock_env_t *c)
         c->next = c ;
     }
     lock->waiting = c ;
+}
+
+/* remove a particular waiter; return TRUE if it was queued */
+static inline bool_t
+pt_i_lock_unqueue(pt_lock_t *lock, pt_lock_env_t *c)
+{
+    pt_lock_env_t *prev = lock->waiting ;
+
+    if (prev == NULL) {
+        return false ;
+    }
+    do {
+        if (prev->next == c) {
+            prev->next = c->next ;
+            if (c == lock->waiting) {
+                /* the newest is leaving; the one before it becomes newest */
+                lock->waiting = (c == prev) ? NULL : prev ;
+            }
+            c->next = NULL ;
+            return true ;
+        }
+        prev = prev->next ;
+    } while (prev != lock->waiting) ;
+    return false ;
 }
 
 /* remove the oldest waiter (which must exist) */
@@ -125,9 +152,10 @@ pt_i_lock_update(pt_lock_t *lock)
         w->state = PT_I_LOCK_WRITING ;
         pt_broadcast(pt_get_pt(w), w) ;
         break ;
+    case PT_I_LOCK_IDLE:
     case PT_I_LOCK_READING:
     case PT_I_LOCK_WRITING:
-        /* this request is already active! */
+        /* this request is not waiting for anything! */
         pt_assert(0) ;
         break ;
     }
@@ -173,6 +201,7 @@ pt_lock_release_read(pt_lock_env_t *c, pt_lock_t *lock)
     pt_assert(c->state == PT_I_LOCK_READING) ;
     pt_assert(!lock->nwriters) ;
     pt_assert(lock->nreaders) ;
+    c->state = PT_I_LOCK_IDLE ;
     lock->nreaders -- ;
     pt_i_lock_update(lock) ;
 }
@@ -184,8 +213,43 @@ pt_lock_release_write(pt_lock_env_t *c, pt_lock_t *lock)
     pt_assert(c->state == PT_I_LOCK_WRITING) ;
     pt_assert(!lock->nreaders) ;
     pt_assert(lock->nwriters == 1) ;
+    c->state = PT_I_LOCK_IDLE ;
     lock->nwriters -- ;
     pt_i_lock_update(lock) ;
+}
+
+/* Take a request out of the lock, whether it is still queued or has already
+ * been granted, and let whatever that unblocks proceed. The protothread is
+ * NOT woken, so this is for use before pt_kill()ing or freeing one that might
+ * be using the lock, as pt_timer_cancel() is for one that might be sleeping.
+ * Returns TRUE if the lock still knew about the request. The lock_env must
+ * have been zeroed or used with this lock; never blocks.
+ */
+static inline bool_t
+pt_lock_cancel(pt_lock_env_t *c, pt_lock_t *lock)
+{
+    bool_t found ;
+
+    switch (c->state) {
+    case PT_I_LOCK_READING:
+        pt_assert(lock->nreaders) ;
+        lock->nreaders -- ;
+        found = true ;
+        break ;
+    case PT_I_LOCK_WRITING:
+        pt_assert(lock->nwriters == 1) ;
+        lock->nwriters -- ;
+        found = true ;
+        break ;
+    default:
+        found = pt_i_lock_unqueue(lock, c) ;
+        break ;
+    }
+    c->state = PT_I_LOCK_IDLE ;
+    if (found) {
+        pt_i_lock_update(lock) ;
+    }
+    return found ;
 }
 
 /* TODO: "try" routines (cannot block, return bool_t)

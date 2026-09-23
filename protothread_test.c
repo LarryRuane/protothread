@@ -1313,6 +1313,88 @@ test_version(void)
 
 /******************************************************************************/
 
+typedef struct {
+    pt_thread_t pt_thread ;
+    pt_func_t pt_func ;
+    pt_lock_env_t lock_env ;
+    pt_lock_t * lock ;
+    int got ;
+} lock_cancel_context_t ;
+
+static pt_t
+lock_cancel_thr(env_t const env)
+{
+    lock_cancel_context_t * const c = env ;
+    pt_resume(c) ;
+    pt_lock_acquire_write(c, &c->lock_env, c->lock) ;
+    c->got = 1 ;
+    pt_yield(c) ;
+    pt_lock_release_write(&c->lock_env, c->lock) ;
+    return PT_DONE ;
+}
+
+static void
+test_lock_cancel(void)
+{
+    protothread_t const pt = protothread_create() ;
+    lock_cancel_context_t c[3] ;
+    lock_cancel_context_t unused ;
+    pt_lock_t lock ;
+    int i ;
+
+    memset(c, 0, sizeof(c)) ;
+    memset(&unused, 0, sizeof(unused)) ;
+    pt_lock_init(&lock) ;
+    for (i = 0; i < 3; i++) {
+        c[i].lock = &lock ;
+        pt_create(pt, &c[i].pt_thread, lock_cancel_thr, &c[i]) ;
+    }
+    /* c[0] holds the lock, c[1] and c[2] are queued behind it */
+    for (i = 0; i < 3; i++) {
+        (void)protothread_run(pt) ;
+    }
+    check(c[0].got && !c[1].got && !c[2].got) ;
+
+    /* an environment the lock has never seen, and one that never queued */
+    check(!pt_lock_cancel(&unused.lock_env, &lock)) ;
+
+    /* cancel a queued request, then kill it: the lock must not be wedged */
+    check(pt_lock_cancel(&c[1].lock_env, &lock)) ;
+    check(pt_kill(&c[1].pt_thread)) ;
+    while (protothread_run(pt)) ;
+    check(c[2].got) ;
+    check(!c[1].got) ;
+
+    /* cancelling twice reports the second time that there was nothing left */
+    check(!pt_lock_cancel(&c[1].lock_env, &lock)) ;
+
+    /* the lock is free again once the last holder releases */
+    check(lock.nreaders == 0 && lock.nwriters == 0 && lock.waiting == NULL) ;
+
+    /* a released request is no longer known to the lock */
+    check(!pt_lock_cancel(&c[0].lock_env, &lock)) ;
+    check(lock.nwriters == 0) ;
+
+    /* now cancel a holder rather than a waiter: c[0] takes it and is killed */
+    memset(c, 0, sizeof(c)) ;
+    for (i = 0; i < 2; i++) {
+        c[i].lock = &lock ;
+        pt_create(pt, &c[i].pt_thread, lock_cancel_thr, &c[i]) ;
+    }
+    (void)protothread_run(pt) ;
+    (void)protothread_run(pt) ;
+    check(c[0].got && !c[1].got) ;
+    check(pt_lock_cancel(&c[0].lock_env, &lock)) ;
+    check(pt_kill(&c[0].pt_thread)) ;
+    while (protothread_run(pt)) ;
+    check(c[1].got) ;
+    check(lock.nreaders == 0 && lock.nwriters == 0 && lock.waiting == NULL) ;
+
+    protothread_free(pt) ;
+}
+
+/******************************************************************************/
+
 /* Interrupt races. These need the critical-section harness from CI, which
  * counts nesting depth and can fire a fake interrupt handler at the moment
  * interrupts are about to be masked -- the only moment a real one can land.
@@ -1394,6 +1476,26 @@ irq_kill(void)
     (void)pt_kill(&irq_target.pt_thread) ;
 }
 
+static volatile int irq_flag ;
+static int irq_until_channel ;
+
+static pt_t
+irq_until_thr(env_t const env)
+{
+    irq_context_t * const c = env ;
+    pt_resume(c) ;
+    pt_wait_until(c, &irq_until_channel, irq_flag) ;
+    c->done = 1 ;
+    return PT_DONE ;
+}
+
+static void
+irq_signal(void)
+{
+    irq_flag = 1 ;
+    pt_signal(irq_pt, &irq_until_channel) ;
+}
+
 static void
 test_interrupts(void)
 {
@@ -1458,6 +1560,29 @@ test_interrupts(void)
         check(j.done) ;
         protothread_free(irq_pt) ;
     }
+
+    /* an interrupt that sets a predicate and signals, at any point during
+     * pt_wait_until(), is never lost
+     */
+    for (k = 1; k <= 8; k++) {
+        irq_context_t c ;
+
+        memset(&c, 0, sizeof(c)) ;
+        irq_flag = 0 ;
+        irq_pt = protothread_create() ;
+        pt_create(irq_pt, &c.pt_thread, irq_until_thr, &c) ;
+        pt_cs_irq = irq_signal ;
+        pt_cs_irq_at = k ;
+        while (protothread_run(irq_pt)) ;
+        pt_cs_irq = NULL ;
+        if (!irq_flag) {
+            /* the interrupt never fired; signal from thread context instead */
+            irq_signal() ;
+            while (protothread_run(irq_pt)) ;
+        }
+        check(c.done) ;
+        protothread_free(irq_pt) ;
+    }
 }
 
 #endif /* PT_TEST_IRQ */
@@ -1484,6 +1609,7 @@ main()
     test_reset() ;
     test_timer() ;
     test_join() ;
+    test_lock_cancel() ;
     test_version() ;
 #ifdef PT_TEST_IRQ
     test_interrupts() ;

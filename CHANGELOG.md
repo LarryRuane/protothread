@@ -5,6 +5,31 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `pt_wait_until(c, channel, cond)`, which tests the predicate and enqueues in
+  one critical section. `while (!cond) pt_wait(c, channel)` cannot survive an
+  interrupt handler that makes the condition true and signals between those two
+  steps; this can. With `PT_CRITICAL_*` undefined it compiles to the same code
+  as the loop. The library already used this internally, which is what makes
+  `pt_timer_run()` safe from a tick interrupt and `pt_join()` safe against a
+  `pt_kill()` from one.
+- `pt_lock_cancel(lock_env, lock)`, which takes a request out of a
+  reader-writer lock, whether it is still queued or already granted, and starts
+  whatever that lets proceed. It does not wake the protothread; it is for use
+  before `pt_kill()`ing or freeing one that might be using the lock, as
+  `pt_timer_cancel()` is for one that might be sleeping. Without it such a kill
+  left the lock granted to a dead thread and never released.
+
+### Changed
+
+- Releasing a reader-writer lock returns its environment to an idle state, so
+  the lock can tell a live request from a finished one. Internal, but it means
+  a `pt_lock_env_t` must be zeroed or have been used with that lock before
+  `pt_lock_cancel()` is called on it.
+
 ## [2.0.0] - 2026-09-22
 
 The first tagged release. It rebuilds the library around one goal: to be usable

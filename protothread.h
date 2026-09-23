@@ -32,6 +32,7 @@
  * Inside a protothread function; c is the context, and all of these are macros
  *   pt_resume(c)                     first statement of a protothread function
  *   pt_wait(c, channel)              block until channel is signalled
+ *   pt_wait_until(c, channel, cond)  the same, but safe against interrupts
  *   pt_yield(c)                      let other ready protothreads run first
  *   pt_call(c, func, child_c, ...)   call a protothread function that may block
  *   pt_call_waited(c)                did that pt_call() block?
@@ -504,6 +505,16 @@ pt_i_enqueue_wait(pt_thread_t * const t, void * const channel)
         } \
         PT_CRITICAL_EXIT(pt_i_saved) ; \
     } while (0)
+
+/* Block until cond is true. The test and the enqueue share one critical
+ * section, so a signal from an interrupt handler cannot land between them
+ * and be lost, which is the one thing "while (!cond) pt_wait()" cannot
+ * survive. cond is evaluated more than once, so it must not have side
+ * effects, and whatever an interrupt handler writes to make it true must be
+ * written before it signals the channel.
+ */
+#define pt_wait_until(env, channel, cond) \
+    pt_i_wait_while(env, channel, !(cond))
 
 /* Let other ready protothreads run, then resume this thread */
 #define pt_yield(env) \
