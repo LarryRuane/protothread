@@ -964,7 +964,7 @@ My thanks to Paul Soulier for introducing me to the concept of protothreads, and
 
 The project lives at [github.com/LarryRuane/protothread](https://github.com/LarryRuane/protothread). [TODO.md](TODO.md) lists ideas and deferred work, if you are looking for somewhere to start.
 
-Bug reports, questions and pull requests are welcome as [GitHub issues](https://github.com/LarryRuane/protothread/issues) -- please prefer those to email, so that other people can find the answers. Otherwise: _LarryRuane@gmail.com_, or [@LarryRuane](https://x.com/LarryRuane) on X if email doesn't reach me.
+Bug reports, questions and pull requests are welcome as [GitHub issues](https://github.com/LarryRuane/protothread/issues) -- please prefer those to email, so that other people can find the answers. If you work with AI tools, please read [doc/AI_POLICY.md](doc/AI_POLICY.md) first; they are welcome, and were used here, but a person has to choose the work, understand it and answer for it. Otherwise: _LarryRuane@gmail.com_, or [@LarryRuane](https://x.com/LarryRuane) on X if email doesn't reach me.
 
 ### Tips ###
 
