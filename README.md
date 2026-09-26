@@ -752,7 +752,7 @@ These are macros (designed to look and act like function calls) whose first argu
 
 > `void pt_wait_until(struct context_t *c, void *channel, cond)`
 >
-> Block until `cond` is true, testing it and enqueueing on `channel` in one critical section. That is the difference from `while (!cond) pt_wait(c, channel)`, where an interrupt handler that makes `cond` true and signals in between is missed, and the protothread blocks forever; see [Lost wakeups](#lost-wakeups). `cond` is evaluated more than once, so it must have no side effects, and a handler must write whatever makes it true *before* it signals. Between protothreads the two forms are equivalent, since nothing runs in between.
+> Block until `cond` is true, testing it and enqueueing on `channel` in one critical section. That is the difference from `while (!cond) pt_wait(c, channel)`, where an interrupt handler that makes `cond` true and signals in between is missed, and the protothread blocks forever; see [Lost wakeups](#lost-wakeups). `cond` is evaluated more than once, so it must have no side effects, and a handler must write whatever makes it true *before* it signals. Between protothreads the two forms are equivalent, since nothing runs in between. Note that Dunkels' `PT_WAIT_UNTIL` is different: it re-tests its condition whenever the application calls the protothread, while this one re-tests only when `channel` is signalled, so whatever makes `cond` true must also signal it.
 
 > `void pt_yield(struct context_t *c)`
 >
