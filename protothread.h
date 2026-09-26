@@ -447,10 +447,13 @@ pt_i_enqueue_wait(pt_thread_t * const t, void * const channel)
     PT_CRITICAL_EXIT(saved) ;
 }
 
-/* Construct goto labels using the current line number (so they are unique). */
-#define PT_I_LABEL_HELP2(line) pt_i_label_ ## line
-#define PT_I_LABEL_HELP(line) PT_I_LABEL_HELP2(line)
-#define PT_I_LABEL PT_I_LABEL_HELP(__LINE__)
+/* Construct a goto label from a number that is unique in the translation
+ * unit. Each blocking macro takes one __COUNTER__ value and passes it down,
+ * so its two uses of the label agree, and two blocking macros on one line,
+ * or inside one user macro, never collide.
+ */
+#define PT_I_LABEL_HELP2(n) pt_i_label_ ## n
+#define PT_I_LABEL_N(n) PT_I_LABEL_HELP2(n)
 
 #if !PT_DEBUG
 #define pt_i_debug_save(env)
@@ -476,13 +479,14 @@ pt_i_enqueue_wait(pt_thread_t * const t, void * const channel)
 #endif
 
 /* Wait for a channel to be signaled */
-#define pt_wait(env, channel) \
+#define pt_wait(env, channel) pt_i_wait_n(env, channel, __COUNTER__)
+#define pt_i_wait_n(env, channel, n) \
     do { \
-        (env)->pt_func.label = &&PT_I_LABEL ; \
+        (env)->pt_func.label = &&PT_I_LABEL_N(n) ; \
         pt_i_enqueue_wait((env)->pt_func.thread, channel) ; \
         pt_i_debug_wait(env) ; \
         return PT_I_WAIT ; \
-      PT_I_LABEL: ; \
+      PT_I_LABEL_N(n): ; \
     } while (0)
 
 /* Like "while (cond) pt_wait(env, channel)", but the test and the enqueue
@@ -491,12 +495,14 @@ pt_i_enqueue_wait(pt_thread_t * const t, void * const channel)
  * calls wake; ordinary protothread code should use the loop.
  */
 #define pt_i_wait_while(env, channel, cond) \
+    pt_i_wait_while_n(env, channel, cond, __COUNTER__)
+#define pt_i_wait_while_n(env, channel, cond, n) \
     do { \
         pt_i_critical_t pt_i_saved ; \
-      PT_I_LABEL: \
+      PT_I_LABEL_N(n): \
         pt_i_saved = PT_CRITICAL_ENTER() ; \
         if (cond) { \
-            (env)->pt_func.label = &&PT_I_LABEL ; \
+            (env)->pt_func.label = &&PT_I_LABEL_N(n) ; \
             pt_i_enqueue_wait((env)->pt_func.thread, channel) ; \
             PT_CRITICAL_EXIT(pt_i_saved) ; \
             pt_i_debug_wait(env) ; \
@@ -506,25 +512,28 @@ pt_i_enqueue_wait(pt_thread_t * const t, void * const channel)
     } while (0)
 
 /* Let other ready protothreads run, then resume this thread */
-#define pt_yield(env) \
+#define pt_yield(env) pt_i_yield_n(env, __COUNTER__)
+#define pt_i_yield_n(env, n) \
     do { \
-        (env)->pt_func.label = &&PT_I_LABEL ; \
+        (env)->pt_func.label = &&PT_I_LABEL_N(n) ; \
         pt_i_enqueue_yield((env)->pt_func.thread) ; \
         pt_i_debug_wait(env) ; \
         return PT_I_WAIT ; \
-      PT_I_LABEL: ; \
+      PT_I_LABEL_N(n): ; \
     } while (0)
 
 /* Call a function (which may wait) */
 #define pt_call(env, child_func, child_env, ...) \
+    pt_i_call_n(__COUNTER__, env, child_func, child_env, ##__VA_ARGS__)
+#define pt_i_call_n(n, env, child_func, child_env, ...) \
     do { \
         (child_env)->pt_func.thread = (env)->pt_func.thread ; \
         (child_env)->pt_func.label = NULL ; \
         (env)->pt_func.label = NULL ; \
         pt_i_debug_call(env, child_env) ; \
-      PT_I_LABEL: \
+      PT_I_LABEL_N(n): \
         if (child_func(child_env, ##__VA_ARGS__).pt_rv == PT_I_WAIT.pt_rv) { \
-            (env)->pt_func.label = &&PT_I_LABEL ; \
+            (env)->pt_func.label = &&PT_I_LABEL_N(n) ; \
             return PT_I_WAIT ; \
         } \
     } while (0)
