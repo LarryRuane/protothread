@@ -13,9 +13,9 @@
 
 I wrote this from scratch, and it is not compatible with other versions of protothreads. I came to it from a Unix kernel background, and while Dunkels' idea is brilliant, I wanted a programming interface that felt more like the threaded code I was used to reading and writing. The differences that matter in daily use:
 
-  * **Blocking functions can nest.** A protothread function can `pt_call()` another protothread function, which can block, to any depth. The common implementations give you a single flat function per protothread; here a protothread is a genuine call chain, so you can factor blocking code into subroutines the way you would anywhere else.
+  * **Blocking functions nest with an ordinary call.** A protothread function can `pt_call()` another protothread function, which can block, to any depth, passing it arguments and carrying on when it returns, so you can factor blocking code into subroutines the way you would anywhere else. Dunkels' library nests too, with `PT_SPAWN()`; what differs is how a blocked thread gets resumed, the third point below.
   * **You can block anywhere**, including inside a `switch` statement. Implementations built on Duff's device cannot, because they have already spent the `switch`.
-  * **A real scheduler, with wait channels.** `pt_wait()`/`pt_signal()`/`pt_broadcast()` on an arbitrary address deliberately mirror condition variables (`pthread_cond_wait()`, except a `pthread_cond_t` variable isn't needed) and the classic Unix kernel `sleep()`/`wakeup()`. Threads live on a run list or a wait list; you are not hand-rolling dispatch. Semaphores, reader-writer locks and timers are built on top of it, in optional headers of their own.
+  * **A real scheduler, with wait channels.** `pt_wait()`/`pt_signal()`/`pt_broadcast()` on an arbitrary address deliberately mirror condition variables (`pthread_cond_wait()`, except a `pthread_cond_t` variable isn't needed) and the classic Unix kernel `sleep()`/`wakeup()`. Threads live on a run list or a wait list, and a blocked thread does not run at all until its channel is signalled. Dunkels' library leaves scheduling to the application: a blocked protothread is simply called again later, and re-tests its condition each time, re-running every level of any nesting to get there. Semaphores, reader-writer locks and timers are built on top of it, in optional headers of their own.
 
 The cost of nesting and arbitrary blocking is that this implementation uses [gcc label variables](http://gcc.gnu.org/onlinedocs/gcc/Labels-as-Values.html), which is the one part of it that is not standard C, so it requires **gcc or clang** (see [Compiler requirements](#compiler-requirements)). Dunkels' `switch`-based version is portable to any C compiler; this one trades that for a better interface.
 
@@ -430,6 +430,15 @@ Compiling with `-Wall` catches it, pointing at both the use and the declaration 
 
 This diagnostic used to require `-O2` or higher, because it depended on optimizer flow analysis. That is no longer the case: current compilers report it at every optimization level, `-O0` included. (Verified with gcc 15.2 and clang 20 and 22 at `-O0`, `-O1`, `-O2` and `-Os`.) You do need `-Wall` or `-Wextra` -- at the default warning level both compilers stay silent. The supplied `CMakeLists.txt` sets `-Wall`.
 
+gcc's check is weaker for the most natural form of this mistake, a loop counter:
+```
+     pt_resume(c);
+     for (int i = 0; i < 10; i++) {
+         pt_yield(c);        /* i is lost here */
+     }
+```
+gcc 15.2 warns about this only at `-O0`, while clang's `-Wall` catches it at every level. So even if you ship with gcc, building with clang now and then is a cheap check.
+
 **Declared before `pt_resume()` -- the compiler does not catch this.** Here the declaration is not skipped; it re-runs on every entry, so the variable is silently reset each time the thread resumes:
 ```
      int x = 1;              /* re-initialized on every resume */
@@ -455,6 +464,8 @@ That converts the silent failure above into a hard compile error, in both gcc an
 ### Protothread function nesting ###
 
 How does function nesting work? When protothread function **A** calls (using `pt_call()`) a protothread function **B**, and **B** wants to block (`pt_wait()`), **B** saves its current location into its context and returns `PT_I_WAIT` to the `pt_call()` in **A**, which causes it to save into **A**'s context as its resume point exactly where it calls **B**. **A** then returns `PT_I_WAIT` to its caller. When the scheduler resumes the thread, **A** runs, its `pt_resume()` jumps to the call to **B**, so **A** calls **B**, and **B**'s `pt_resume()` jumps to just after where it had blocked and continues running. So the stack unwinds when the thread blocks, and "forward-winds" when it resumes. This is how the overall system still uses a single stack. Also, it should be clear now why evaluating the arguments that **A** passes to **B** should have no side effects -- **A** calls **B** every time the thread is resumed.
+
+It also means resuming costs one function call per level: a thread blocked N calls deep re-enters all N to get back to where it was. Measured, that adds about 3 ns per level to a context switch, from 8.6 ns for a thread blocked one call deep to 59 ns for one blocked seventeen deep (gcc `-O2`, on the benchmark machine). It is paid only when the thread actually runs, since a blocked thread is never resumed just to re-check.
 
 When **B** finally finishes and returns `PT_DONE`, **A** knows to continue running following the `pt_call()` to **B**.
 
