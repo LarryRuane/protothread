@@ -352,7 +352,7 @@ Now for the details. The two most interesting calls in the producer/consumer exa
      return PT_DONE;
  }
 ```
-The first time the thread runs, its label variable is `NULL`, so it does not `goto` -- the code enters the `for` loop from the top. When it reaches the call to `pt_wait()`, it saves the address of the label (whose name is derived from the line number, `__LINE__`; note the double-ampersand syntax to denote the address corresponding to a label), enqueues the thread on a _waiting_ list within the protothreads object (and it's going to wait for a signal on the address of the mailbox), and returns `PT_I_WAIT`. (The return value is not used in this example; as explained later it is used only if there are nested protothread functions.)
+The first time the thread runs, its label variable is `NULL`, so it does not `goto` -- the code enters the `for` loop from the top. When it reaches the call to `pt_wait()`, it saves the address of the label (whose name is made unique with `__COUNTER__`; note the double-ampersand syntax to denote the address corresponding to a label), enqueues the thread on a _waiting_ list within the protothreads object (and it's going to wait for a signal on the address of the mailbox), and returns `PT_I_WAIT`. (The return value is not used in this example; as explained later it is used only if there are nested protothread functions.)
 
 When this thread is resumed, the label variable is non-NULL, so `pt_resume()` jumps to the value of the label variable, and execution continues from where it left off. In this case, the producer thread continues in the `while` loop, waiting for the mailbox to become empty. As when using POSIX condition variables, it's common to re-test the condition being waited for.
 
@@ -701,12 +701,9 @@ The critical sections are short and O(1), except that `pt_signal()`, `pt_broadca
 
 This implementation requires the gcc [labels-as-values](http://gcc.gnu.org/onlinedocs/gcc/Labels-as-Values.html) extension (`&&label` and `goto *ptr`), so it needs **gcc or clang**. That includes the usual microcontroller toolchains: `arm-none-eabi-gcc`, `armclang`, `avr-gcc`, `msp430-gcc` and the RISC-V ones. It does not work with IAR or ARMCC, which do not support computed goto; for those compilers use Dunkels' `switch`-based implementation instead.
 
-Apart from that one extension the code is ordinary C. CI builds and runs the test suite on gcc and clang, on Linux and macOS, across `PT_DEBUG` and `NDEBUG` on and off, `PT_NWAIT` of 1, 4 and 1024, `-O0` through `-Os`, `-std=c99` through `-std=c23`, and under AddressSanitizer, UndefinedBehaviorSanitizer and ThreadSanitizer -- all with `-Wall -Wextra -Werror`. It also asserts that a freestanding build still needs no libc symbols at all, since one careless `#include` would quietly break that.
+Apart from that extension, and `__COUNTER__` for naming the labels, which every gcc and clang also provides, the code is ordinary C. CI builds and runs the test suite on gcc and clang, on Linux and macOS, across `PT_DEBUG` and `NDEBUG` on and off, `PT_NWAIT` of 1, 4 and 1024, `-O0` through `-Os`, `-std=c99` through `-std=c23`, and under AddressSanitizer, UndefinedBehaviorSanitizer and ThreadSanitizer -- all with `-Wall -Wextra -Werror`. It also asserts that a freestanding build still needs no libc symbols at all, since one careless `#include` would quietly break that.
 
-Two consequences of the `__LINE__`-based label naming are worth knowing:
-
-  * You cannot put two protothread macros (`pt_wait`, `pt_yield`, `pt_call`) on the same source line. This is a compile error (`duplicate label`), never a silent bug.
-  * A protothread function's blocking macros must all be in the same function; you cannot hide one inside a helper macro that is used twice on one line.
+Each blocking macro names its label with a fresh `__COUNTER__` value, so labels never collide: several blocking macros can share a line, and a macro of your own can contain more than one. Earlier versions named them after `__LINE__`, which made both of those a `duplicate label` compile error. What is still true is that a protothread function's blocking macros must all be in that function, since a label belongs to the function it is in.
 
 `pt_resume()` contains a dead address-of-label expression. That is not decoration: clang rejects an indirect `goto` in a function containing no address-of-label at all, so without it a protothread function that never blocks -- and therefore has no `pt_wait()`, `pt_yield()` or `pt_call()` to supply one -- fails to compile. It costs nothing; the generated code is byte-for-byte identical.
 

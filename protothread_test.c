@@ -1313,6 +1313,62 @@ test_version(void)
 
 /******************************************************************************/
 
+/* Several blocking macros on one line, and inside one user macro. With goto
+ * labels named after __LINE__, both of these failed to compile.
+ */
+#define yield_twice(c) do { pt_yield(c) ; pt_yield(c) ; } while (0)
+
+typedef struct {
+    pt_func_t pt_func ;
+} sl_child_t ;
+
+static pt_t
+sl_child(sl_child_t * const c, int * const n)
+{
+    pt_resume(c) ;
+    (*n)++ ; pt_yield(c) ; (*n)++ ;
+    return PT_DONE ;
+}
+
+typedef struct {
+    pt_thread_t pt_thread ;
+    pt_func_t pt_func ;
+    sl_child_t ch ;
+    int n ;
+} same_line_context_t ;
+
+static pt_t
+same_line_thr(env_t const env)
+{
+    same_line_context_t * const c = env ;
+    pt_resume(c) ;
+    c->n++ ; pt_yield(c) ; c->n++ ; pt_yield(c) ; c->n++ ;
+    yield_twice(c) ;
+    pt_call(c, sl_child, &c->ch, &c->n) ; pt_call(c, sl_child, &c->ch, &c->n) ;
+    return PT_DONE ;
+}
+
+static void
+test_same_line(void)
+{
+    protothread_t const pt = protothread_create() ;
+    same_line_context_t c ;
+    int runs = 1 ;
+
+    memset(&c, 0, sizeof(c)) ;
+    pt_create(pt, &c.pt_thread, same_line_thr, &c) ;
+    while (protothread_run(pt)) {
+        runs++ ;
+    }
+    /* three increments on the line, two in each child call */
+    check(c.n == 7) ;
+    /* two yields on the line, two in the macro, one in each child call */
+    check(runs == 7) ;
+    protothread_free(pt) ;
+}
+
+/******************************************************************************/
+
 /* Interrupt races. These need the critical-section harness from CI, which
  * counts nesting depth and can fire a fake interrupt handler at the moment
  * interrupts are about to be masked -- the only moment a real one can land.
@@ -1484,6 +1540,7 @@ main()
     test_reset() ;
     test_timer() ;
     test_join() ;
+    test_same_line() ;
     test_version() ;
 #ifdef PT_TEST_IRQ
     test_interrupts() ;
