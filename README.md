@@ -3,7 +3,7 @@
 [![CI](https://github.com/LarryRuane/protothread/actions/workflows/ci.yml/badge.svg)](https://github.com/LarryRuane/protothread/actions/workflows/ci.yml)
 
 
-[Protothreads](http://en.wikipedia.org/wiki/Protothreads) is a programming model invented by Adam Dunkels that combines the advantages of _event-driven_ (sometimes also called _state machine_) programming and _threaded_ programming. The trick underneath, jumping back into the middle of a function, goes back to Tom Duff's [Duff's device](https://en.wikipedia.org/wiki/Duff%27s_device) (1983), a `switch` that jumps into the middle of a loop, which Simon Tatham turned into [coroutines in C](https://www.chiark.greenend.org.uk/~sgtatham/coroutines.html) before Dunkels built protothreads on it. The main advantage of the event-driven model is efficiency, both speed and memory usage. The main advantage of the threaded model is [algorithm clarity](http://dunkels.com/adam/dunkels06protothreads.pdf). Protothreads gives you both. A protothread is an extremely lightweight thread. As with event-driven programming, there is a single stack; but like threaded programming, a function can (at least conceptually) block. This protothreads implementation:
+[Protothreads](http://en.wikipedia.org/wiki/Protothreads) is a programming model invented by Adam Dunkels that combines the advantages of _event-driven_ (sometimes also called _state machine_) programming and _threaded_ programming. The trick underneath, jumping back into the middle of a function, goes back to Tom Duff's [Duff's device](https://en.wikipedia.org/wiki/Duff%27s_device) (1983), a `switch` that jumps into the middle of a loop, which Simon Tatham turned into [coroutines in C](https://www.chiark.greenend.org.uk/~sgtatham/coroutines.html) before Dunkels built protothreads on it. The main advantage of the event-driven model is efficiency, both speed and memory usage. The main advantage of the threaded model is [algorithm clarity](http://dunkels.com/adam/dunkels06protothreads.pdf). Protothreads gives you both. A protothread is an extremely lightweight thread. As with event-driven programming, there is a single stack, shared by every protothread; but like threaded programming, a function can (at least conceptually) block. (That is what "stackless" means here: not no stack at all, but no stack of each thread's own.) This protothreads implementation:
   * is not an implementation of POSIX threads or any other standard API
   * does not require assembly-language code or use setjmp/longjmp
   * is independent of CPU architecture
@@ -38,7 +38,7 @@ The cost of nesting and arbitrary blocking is that this implementation uses [gcc
 | create + destroy | 2.8 ns | 28,852 ns | **10,300x** |
 | memory per thread | 56 bytes | 16,384 bytes | **293x** |
 
-Protothreads are faster here because they do less: no kernel transition, no scheduler, no stack, no mutex locking. POSIX threads provide preemption and real parallelism, which protothreads do not. See [Memory overhead and performance](#memory-overhead-and-performance-benchmarks) for a detailed comparison and [Protothreads on a multi-core system](#protothreads-on-a-multi-core-system) for using both together.
+Protothreads are faster here because they do less: no kernel transition, no scheduler, no per-thread stack, no mutex locking. POSIX threads provide preemption and real parallelism, which protothreads do not. See [Memory overhead and performance](#memory-overhead-and-performance-benchmarks) for a detailed comparison and [Protothreads on a multi-core system](#protothreads-on-a-multi-core-system) for using both together.
   * optional semaphores, reader-writer locks and timers, each in its own header and built entirely on the core
   * about 1000 lines of test code
   * gdb (debugger) macros to print the stack traces of a given protothread or all protothreads.
@@ -98,7 +98,7 @@ That is everything you need to start.
 
 For contrast, POSIX [`pthread.h`](https://pubs.opengroup.org/onlinepubs/9699919799.orig/basedefs/pthread.h.html) declares 101 functions. That isn't a fair comparison, because pthreads gives you preemption, real parallelism, priorities and synchronization that works between processes, and none of that is on offer here. But most of that count isn't the extra power, it's the configuration the extra power needs. Forty-five of those functions do nothing but manage attribute objects, thirty-five of them `get`/`set` pairs, and another ten are `init` and `destroy` for the synchronization objects themselves. What's left brings its own vocabulary: detach state, scheduling scope and inheritance, cancellation state and type, cleanup handler stacks, thread-specific data keys with destructors, four mutex types, three priority protocols, and process-shared variants of most of it.
 
-Nearly all of that exists because a pthread can be interrupted between any two instructions. A protothread can't. It runs until it blocks, at a line you can point at, so there is no priority to invert, no cancellation point to reason about, and no stack to size. Those functions aren't missing here so much as they have nothing to do.
+Nearly all of that exists because a pthread can be interrupted between any two instructions. A protothread can't. It runs until it blocks, at a line you can point at, so there is no priority to invert, no cancellation point to reason about, and no per-thread stack to size. Those functions aren't missing here so much as they have nothing to do.
 
 These three headers built on it are entirely optional, but provide commonly-used abstractions:
 
@@ -108,7 +108,9 @@ These three headers built on it are entirely optional, but provide commonly-used
 
 Each is ordinary protothread code over `pt_wait()` and `pt_broadcast()`, as much a demonstration of what the core can express as a facility to use. They are described under [Built on top](#built-on-top-semaphores-timers-and-locks).
 
-## Threads without stacks ##
+## Threads that share one stack ##
+
+Protothreads are often called *stackless* threads, which can sound as though there is no stack at all. There is: exactly one, the ordinary C stack, and every protothread runs on it, just as every handler in an event-driven program does. What a protothread lacks is a stack of its *own*, so nothing it leaves on that shared stack survives when it blocks.
 
 The key concept of any protothreads implementation is that when a function wants to wait for an event to occur (that is, suspend itself and let other threads run), it saves its current location within the function (conceptually its line number or program counter), and returns back to the scheduler or idle loop, releasing use of the stack. The scheduler runs a different thread, handles interrupts or waits for an external event to occur. When the event occurs, the scheduler calls the function in the usual way, and the first thing the function does is `goto` the previously saved location. This location might be within levels of nested loops and `if` statements.
 
@@ -615,7 +617,7 @@ The context switch benchmark is two threads handing a token back and forth a mil
 
 Read these as orders of magnitude, not as digits: the absolute numbers move with the machine, the kernel, and its speculative-execution mitigations, and the pthread side is the part that moves most.
 
-**This is not an apples-to-apples comparison, and it should not be read as one.** POSIX threads give you preemption and real parallelism across cores; protothreads give you neither. What the benchmark measures is the cost of the mechanism itself -- what you pay, per operation, for the ability to write code that blocks. Protothreads win by these margins because they do enormously less: no kernel transition, no scheduler, no stack. Where that trade is a good one -- a state machine per connection, an event loop, an embedded system with no MMU -- the ratios above are the reason to care. Where you need to keep four cores busy, they are beside the point.
+**This is not an apples-to-apples comparison, and it should not be read as one.** POSIX threads give you preemption and real parallelism across cores; protothreads give you neither. What the benchmark measures is the cost of the mechanism itself -- what you pay, per operation, for the ability to write code that blocks. Protothreads win by these margins because they do enormously less: no kernel transition, no scheduler, no per-thread stack. Where that trade is a good one -- a state machine per connection, an event loop, an embedded system with no MMU -- the ratios above are the reason to care. Where you need to keep four cores busy, they are beside the point.
 
 ## Versioning ##
 
