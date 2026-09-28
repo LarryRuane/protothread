@@ -9,6 +9,10 @@
   * is independent of CPU architecture
   * schedules threads non-preemptibly and deterministically.
 
+### Concurrency, not parallelism ###
+
+If protothreads never run two things at once, why threads at all? Because running things at once was never the main reason for threads. Rob Pike's distinction is the useful one: [concurrency is not parallelism](https://go.dev/blog/waza-talk). Concurrency is *dealing with* many things at once; parallelism is *doing* many things at once. A program that talks to a sensor, a radio and a user interface has to deal with all three whether it has one core or eight, and threads let each of those activities be written as a sequence of steps, in the order they happen, instead of being taken apart into callbacks and state variables. That clarity is what protothreads keep, for a few dozen bytes per thread. For parallelism, pair them with ordinary threads; see [Protothreads on a multi-core system](#protothreads-on-a-multi-core-system).
+
 ### Why another protothreads implementation? ###
 
 I wrote this from scratch, and it is not compatible with other versions of protothreads. I came to it from a Unix kernel background, and while Dunkels' idea is brilliant, I wanted a programming interface that felt more like the threaded code I was used to reading and writing. The differences that matter in daily use:
