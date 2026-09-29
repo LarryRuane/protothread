@@ -263,7 +263,9 @@ The main test function allocates the overall protothread object or instance (`pt
  }
 ```
 
-The event-driven version of the consumer is a two-state machine, a `switch` on "mailbox empty" and "mailbox full", and for two states that's perfectly readable. The difference shows as the sequence grows. Every `pt_wait()` in a protothread is a state that the event-driven version has to name, store and dispatch on by hand, and naming is the hard part: finding a good name for every intermediate state of a long sequence is often harder than writing the sequence. A protothread's state is its position in the function, and a position needs no name. `pt_resume()` is the `switch` you no longer have to write.
+The event-driven version of the consumer is a two-state machine, a `switch` on "mailbox empty" and "mailbox full", and for two states that's perfectly readable. But notice what's gone. The producer and the consumer are each a `for` loop, which is exactly how you would describe what they do, and in the event-driven version neither loop appears. The only loop is the one around the `switch` that dispatches events, which is the job `protothread_run()` does here. Each activity's own loop has been turned inside out into transitions between states, so you have to reconstruct it to see that it is a loop at all.
+
+The difference grows with the sequence. Every `pt_wait()` in a protothread is a state that the event-driven version has to name, store and dispatch on by hand, and naming is the hard part: finding a good name for every intermediate state of a long sequence is often harder than writing the sequence. A protothread's state is its position in the function, and a position needs no name. `pt_resume()` is the `switch` you no longer have to write.
 
 ## Bare-metal and embedded use ##
 
