@@ -1627,6 +1627,82 @@ test_queue_select(void)
     protothread_free(pt) ;
 }
 
+/* A queue of requests, each carrying the queue its reply goes to: Go's
+ * channel of channels, with a pointer standing in for Go's reference.
+ */
+typedef struct {
+    int x ;
+    intq_t * reply ;
+} request_t ;
+PT_QUEUE_DEFINE(requestq, request_t)
+
+typedef struct {
+    pt_thread_t pt_thread ;
+    pt_func_t pt_func ;
+    pt_queue_env_t queue_env ;
+    requestq_t * requests ;
+    request_t req ;
+    int answer ;
+    int slots[1] ;
+    intq_t replies ;            /* each client's own */
+    int x ;
+} rr_context_t ;
+
+static pt_t
+rr_server_thr(env_t const env)
+{
+    rr_context_t * const c = env ;
+    pt_resume(c) ;
+    for (;;) {
+        pt_call(c, requestq_receive, &c->queue_env, c->requests, &c->req) ;
+        c->answer = c->req.x * c->req.x ;
+        pt_call(c, intq_send, &c->queue_env, c->req.reply, &c->answer) ;
+    }
+}
+
+static pt_t
+rr_client_thr(env_t const env)
+{
+    rr_context_t * const c = env ;
+    pt_resume(c) ;
+    c->req.x = c->x ;
+    c->req.reply = &c->replies ;
+    pt_call(c, requestq_send, &c->queue_env, c->requests, &c->req) ;
+    pt_call(c, intq_receive, &c->queue_env, &c->replies, &c->answer) ;
+    return PT_DONE ;
+}
+
+static void
+test_queue_of_queues(void)
+{
+    protothread_t const pt = protothread_create() ;
+    request_t slots[2] ;
+    requestq_t requests ;
+    rr_context_t server, client[3] ;
+    int i ;
+
+    requestq_init(&requests, slots, 2) ;
+    memset(&server, 0, sizeof(server)) ;
+    server.requests = &requests ;
+    pt_create(pt, &server.pt_thread, rr_server_thr, &server) ;
+    for (i = 0; i < 3; i++) {
+        memset(&client[i], 0, sizeof(client[i])) ;
+        client[i].requests = &requests ;
+        client[i].x = i + 2 ;
+        intq_init(&client[i].replies, client[i].slots, 1) ;
+        pt_create(pt, &client[i].pt_thread, rr_client_thr, &client[i]) ;
+    }
+    while (protothread_run(pt)) ;
+    /* each client got the answer to its own question */
+    for (i = 0; i < 3; i++) {
+        check(client[i].answer == (i + 2) * (i + 2)) ;
+        check(!pt_is_alive(&client[i].pt_thread)) ;
+    }
+    /* the server is still waiting for the next request */
+    check(pt_kill(&server.pt_thread)) ;
+    protothread_free(pt) ;
+}
+
 /* the predefined queue of void * */
 static void
 test_queue_void(void)
@@ -1914,6 +1990,7 @@ main()
     test_queue_nonblocking() ;
     test_queue_select() ;
     test_queue_void() ;
+    test_queue_of_queues() ;
     test_version() ;
 #ifdef PT_TEST_IRQ
     test_interrupts() ;

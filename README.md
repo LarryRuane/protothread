@@ -1101,6 +1101,29 @@ for (;;) {
 
 That is linear in the length of the queue, which is fine for the queues a microcontroller has.
 
+**Queues of queues.** In Go a channel can be sent over a channel, and it's what makes request and reply easy: the client sends its question together with a channel for the answer, and the server replies on whatever channel it was given. A Go channel is a reference, so the equivalent here is a pointer to a queue:
+
+```c
+typedef struct {
+    int x;
+    intq_t * reply;                 /* where the answer goes */
+} request_t;
+PT_QUEUE_DEFINE(requestq, request_t)
+
+/* server */
+pt_call(c, requestq_receive, &c->queue_env, &requests, &c->req);
+c->answer = c->req.x * c->req.x;
+pt_call(c, intq_send, &c->queue_env, c->req.reply, &c->answer);
+
+/* client, with its own reply queue in its context */
+c->req.x = 7;
+c->req.reply = &c->replies;
+pt_call(c, requestq_send, &c->queue_env, &requests, &c->req);
+pt_call(c, intq_receive, &c->queue_env, &c->replies, &c->answer);
+```
+
+Send the pointer, never the queue itself: a copy of a queue would be a second queue sharing the first one's storage. The reply queue also has to outlive the request, which it does here because the client waits for its answer.
+
 ## License ##
 
 MIT. See [LICENSE](LICENSE).
