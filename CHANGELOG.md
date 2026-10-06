@@ -23,6 +23,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `pt_timer_cancel()` is for one that might be sleeping. Without it such a kill
   left the lock granted to a dead thread and never released.
 
+- `protothread_queue.h`: message queues, what Go calls channels. A queue is a
+  fixed-capacity ring buffer in storage the caller supplies, so it needs no
+  allocator, and `PT_QUEUE_DEFINE(name, type)` makes it type-safe; `pt_queue_t`
+  is a predefined queue of `void *`. Sending and receiving block when full and
+  empty, `try_send()` is safe to call from an interrupt handler, and `count()`,
+  `at()`, `remove()` and `wait_send()` let a receiver take one kind of message
+  while others wait, which with a tagged union stands in for Go's `select`.
+
 ### Changed
 
 - The blocking macros name their goto labels with `__COUNTER__` instead of

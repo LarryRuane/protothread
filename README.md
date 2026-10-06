@@ -19,7 +19,7 @@ I wrote this from scratch, and it is not compatible with other versions of proto
 
   * **Blocking functions nest with an ordinary call.** A protothread function can `pt_call()` another protothread function, which can block, to any depth, passing it arguments and carrying on when it returns, so you can factor blocking code into subroutines the way you would anywhere else. Dunkels' library nests too, with `PT_SPAWN()`; what differs is how a blocked thread gets resumed, the third point below.
   * **You can block anywhere**, including inside a `switch` statement. Implementations built on Duff's device cannot, because they have already spent the `switch`.
-  * **A real scheduler, with wait channels.** `pt_wait()`/`pt_signal()`/`pt_broadcast()` on an arbitrary address deliberately mirror condition variables (`pthread_cond_wait()`, except a `pthread_cond_t` variable isn't needed) and the classic Unix kernel `sleep()`/`wakeup()`. Threads live on a run list or a wait list, and a blocked thread does not run at all until its channel is signalled. Dunkels' library leaves scheduling to the application: a blocked protothread is simply called again later, and re-tests its condition each time, re-running every level of any nesting to get there. Semaphores, reader-writer locks and timers are built on top of it, in optional headers of their own.
+  * **A real scheduler, with wait channels.** `pt_wait()`/`pt_signal()`/`pt_broadcast()` on an arbitrary address deliberately mirror condition variables (`pthread_cond_wait()`, except a `pthread_cond_t` variable isn't needed) and the classic Unix kernel `sleep()`/`wakeup()`. Threads live on a run list or a wait list, and a blocked thread does not run at all until its channel is signalled. Dunkels' library leaves scheduling to the application: a blocked protothread is simply called again later, and re-tests its condition each time, re-running every level of any nesting to get there. Semaphores, reader-writer locks, timers and message queues are built on top of it, in optional headers of their own.
 
 The cost of nesting and arbitrary blocking is that this implementation uses [gcc label variables](http://gcc.gnu.org/onlinedocs/gcc/Labels-as-Values.html), which is the one part of it that is not standard C, so it requires **gcc or clang** (see [Compiler requirements](#compiler-requirements)). Dunkels' `switch`-based version is portable to any C compiler; this one trades that for a better interface.
 
@@ -39,7 +39,7 @@ The cost of nesting and arbitrary blocking is that this implementation uses [gcc
 | memory per thread | 56 bytes | 16,384 bytes | **293x** |
 
 Protothreads are faster here because they do less: no kernel transition, no scheduler, no per-thread stack, no mutex locking. POSIX threads provide preemption and real parallelism, which protothreads do not. See [Memory overhead and performance](#memory-overhead-and-performance-benchmarks) for a detailed comparison and [Protothreads on a multi-core system](#protothreads-on-a-multi-core-system) for using both together.
-  * optional semaphores, reader-writer locks and timers, each in its own header and built entirely on the core
+  * optional semaphores, reader-writer locks, timers and message queues, each in its own header and built entirely on the core
   * about 1000 lines of test code
   * gdb (debugger) macros to print the stack traces of a given protothread or all protothreads.
   * a CMake find module, `FindPROTOTHREAD.cmake`: copy it into another CMake project, and `find_package(PROTOTHREAD)` will locate the installed headers
@@ -101,13 +101,14 @@ For contrast, POSIX [`pthread.h`](https://pubs.opengroup.org/onlinepubs/96999197
 
 Nearly all of that exists because a pthread can be interrupted between any two instructions. A protothread can't. It runs until it blocks, at a line you can point at, so there is no priority to invert, no cancellation point to reason about, and no per-thread stack to size. Those functions aren't missing here so much as they have nothing to do.
 
-These three headers built on it are entirely optional, but provide commonly-used abstractions:
+These four headers built on it are entirely optional, but provide commonly-used abstractions:
 
   * `protothread_sem.h` -- counting semaphores
   * `protothread_timer.h` -- sleeping, driven by a clock you supply
   * `protothread_lock.h` -- reader-writer locks
+  * `protothread_queue.h` -- message queues, what Go calls channels
 
-Each is ordinary protothread code over `pt_wait()` and `pt_broadcast()`, as much a demonstration of what the core can express as a facility to use. They are described under [Built on top](#built-on-top-semaphores-timers-and-locks).
+Each is ordinary protothread code over `pt_wait()` and `pt_broadcast()`, as much a demonstration of what the core can express as a facility to use. They are described under [Built on top](#built-on-top-semaphores-timers-locks-and-queues).
 
 ## Threads that share one stack ##
 
@@ -784,7 +785,7 @@ These are macros (designed to look and act like function calls) whose first argu
 
 > `bool_t pt_call_waited(struct context_t *c)`
 >
-> Returns TRUE if the most recent `pt_call()` blocked (either directly in the called function, or in a function that it called, recursively). If function **A** calls **B** and **B** blocks, then when it finally returns to **A**, it's sometimes helpful for **A** to know that other threads might have run, so it should reevaluate the state of the world. But if **B** didn't block, then **A** knows that only a limited change of state (namely, whatever **B** might do) could have occurred. This works after acquiring a semaphore or a lock too, since those are `pt_call()`s; see [Built on top](#built-on-top-semaphores-timers-and-locks) for an example.
+> Returns TRUE if the most recent `pt_call()` blocked (either directly in the called function, or in a function that it called, recursively). If function **A** calls **B** and **B** blocks, then when it finally returns to **A**, it's sometimes helpful for **A** to know that other threads might have run, so it should reevaluate the state of the world. But if **B** didn't block, then **A** knows that only a limited change of state (namely, whatever **B** might do) could have occurred. This works after acquiring a semaphore or a lock too, since those are `pt_call()`s; see [Built on top](#built-on-top-semaphores-timers-locks-and-queues) for an example.
 
 > `void pt_reset(struct context_t *c)`
 >
@@ -862,7 +863,7 @@ None of these schedule or wake a protothread, so none has the lost-wakeup hazard
 >
 > To prevent a sequence of protothread executions from holding onto the CPU for too long, the function can limit the number of times it calls `protothread_run()`; for example it may run no more than 20 threads before returning to the main scheduler to let other things (outside of protothreads) run. But if it does so (if the last call to `protothread_run()` returns TRUE), it should reschedule itself because there is still work to do.
 
-## Built on top: semaphores, timers and locks ##
+## Built on top: semaphores, timers, locks and queues ##
 
 None of this is needed to use protothreads, and none of it is part of the core. Each header is ordinary protothread code over `pt_wait()` and `pt_broadcast()`, with no privileged access to the scheduler -- closer in spirit to the programs in [`demo/`](demo) than to the API above, and worth reading as examples of how to build primitives of your own. They are tested and maintained like the rest of the library.
 
@@ -980,6 +981,81 @@ if (pt_call_waited(c)) {
 ```
 
 Releasing never blocks, so if acquiring didn't either, nothing else ran in between and the upgrade was atomic. That's the case when you were the only reader and nobody was queued. Otherwise you still end up holding the write lock, but anything you read under the read lock may be stale. The answer can only be wrong in the safe direction: if another reader was holding the lock, it reports a wait even though nothing changed.
+
+### Message queues ###
+
+`#include "protothread_queue.h"`. A queue is a first-in, first-out buffer of fixed capacity in storage you supply, so it needs no allocator; Go calls the same thing a channel. Queues are type-safe: `PT_QUEUE_DEFINE(name, type)` generates a queue type `name_t` and its functions, much as `<sys/tree.h>` generates trees, and `pt_queue_t` is a predefined queue of `void *`.
+
+```c
+typedef struct { int kind; int value; } msg_t;
+PT_QUEUE_DEFINE(msgq, msg_t)            /* msgq_t, msgq_send() and the rest */
+
+msg_t slots[8];
+msgq_t q;
+msgq_init(&q, slots, 8);
+```
+
+Sending and receiving can block, so like any blocking function they are protothread functions, called through `pt_call()`, with a `pt_queue_env_t` in your context structure. Items go in and come out through pointers, so each is copied once each way:
+
+```c
+pt_call(c, msgq_send, &c->queue_env, &q, &c->msg);      /* blocks while full */
+pt_call(c, msgq_receive, &c->queue_env, &q, &c->msg);   /* blocks while empty */
+```
+
+> `name_send(pt_queue_env_t *queue_env, name_t *q, type const *item)`
+>
+> Block while the queue is full, then append a copy of `*item`. Call through `pt_call()`.
+
+> `name_receive(pt_queue_env_t *queue_env, name_t *q, type *item)`
+>
+> Block while the queue is empty, then remove the oldest item into `*item`. Call through `pt_call()`.
+
+> `name_wait_send(pt_queue_env_t *queue_env, name_t *q)`
+>
+> Block until another item is sent, without taking anything. Call through `pt_call()`.
+
+> `bool_t name_try_send(protothread_t, name_t *q, type const *item)`
+>
+> `bool_t name_try_receive(protothread_t, name_t *q, type *item)`
+>
+> The same as send and receive, but return FALSE instead of blocking. `try_send()` is safe to call from an interrupt handler once the `PT_CRITICAL_*` macros are defined, and a protothread blocked in `receive()` or `wait_send()` cannot miss what it sends.
+
+> `unsigned int name_count(name_t const *q)`
+>
+> `type *name_at(name_t *q, unsigned int i)`
+>
+> `bool_t name_remove(protothread_t, name_t *q, unsigned int i, type *item)`
+>
+> Look inside the queue without blocking: the number of items, a pointer to the `i`-th oldest (0 is the next to be received), and removal of the `i`-th oldest, which keeps the rest in order. `item` may be NULL to discard. A pointer from `at()` stays valid until something is removed.
+
+Like the semaphore, a queue isn't strictly fair: a protothread that finds it non-empty takes an item even if another was woken for it first, for the same reason, to avoid convoys. Every wakeup is a broadcast, and senders and receivers wait on different channels, so sending wakes only receivers and receiving wakes only senders. Items are copied by assignment, and for an item larger than a few words the compiler may emit a call to `memcpy` (clang targeting Cortex-M does so from 16 bytes at `-Os`). Every embedded toolchain provides it, but if you are avoiding it, queue pointers instead.
+
+**There is no `select`.** Go's `select` waits on several channels at once; a protothread waits on one channel at a time, and that stays true here. Pike's [Go Concurrency Patterns](https://www.youtube.com/watch?v=f6kdp27TYZs) talk shows the usual alternative just before it introduces `select`: *fan-in*, where everything a receiver might want arrives on one queue. With different kinds of message, the item is a tagged union:
+
+```c
+typedef struct {
+    enum { REPLY, STATUS, TIMEOUT } kind;
+    union { struct reply reply; struct status status; } u;
+} msg_t;
+```
+
+A timeout is just another sender: a small protothread that calls `pt_sleep()` and then sends a `TIMEOUT` message, which is all Go's `time.After()` does.
+
+When a receiver wants one kind of message while others wait their turn, it can look before it takes. `wait_send()` blocks only until something new arrives, so messages it has already passed over don't wake it again:
+
+```c
+for (;;) {
+    for (c->i = 0; c->i < msgq_count(&q); c->i++) {
+        if (msgq_at(&q, c->i)->kind == REPLY) {
+            msgq_remove(pt_get_pt(c), &q, c->i, &c->msg);
+            goto got_reply;
+        }
+    }
+    pt_call(c, msgq_wait_send, &c->queue_env, &q);
+}
+```
+
+That is linear in the length of the queue, which is fine for the queues a microcontroller has.
 
 ## License ##
 
