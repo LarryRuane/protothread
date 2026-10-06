@@ -1703,6 +1703,147 @@ test_queue_of_queues(void)
     protothread_free(pt) ;
 }
 
+/* A receive with a timeout, Go's time.After(): a helper protothread sleeps,
+ * then sends TIMEOUT into the same queue the reply will arrive on. Whichever
+ * comes first wins. If the reply does, the helper is stopped; but it may
+ * already have sent, so each wait has a generation and a TIMEOUT from an
+ * earlier one is discarded.
+ */
+enum { TO_REPLY, TO_TIMEOUT } ;
+typedef struct {
+    int kind ;
+    unsigned int gen ;
+} tmsg_t ;
+PT_QUEUE_DEFINE(tmsgq, tmsg_t)
+
+typedef struct {
+    pt_thread_t pt_thread ;
+    pt_func_t pt_func ;
+    pt_timer_env_t timer_env ;
+    pt_queue_env_t queue_env ;
+    pt_timers_t * timers ;
+    tmsgq_t * q ;
+    tmsg_t msg ;
+} after_context_t ;
+
+static pt_t
+after_thr(env_t const env)
+{
+    after_context_t * const c = env ;
+    pt_resume(c) ;
+    pt_sleep(c, &c->timer_env, c->timers, 10) ;
+    pt_call(c, tmsgq_send, &c->queue_env, c->q, &c->msg) ;
+    return PT_DONE ;
+}
+
+typedef struct {
+    pt_thread_t pt_thread ;
+    pt_func_t pt_func ;
+    pt_queue_env_t queue_env ;
+    after_context_t after ;
+    pt_timers_t * timers ;
+    tmsgq_t * q ;
+    tmsg_t msg ;
+    unsigned int gen ;
+    int round ;
+    int result[2] ;
+    int stale ;
+} timeout_context_t ;
+
+static pt_t
+timeout_waiter_thr(env_t const env)
+{
+    timeout_context_t * const c = env ;
+    pt_resume(c) ;
+    for (c->round = 0; c->round < 2; c->round++) {
+        /* start the timer */
+        c->gen++ ;
+        c->after.timers = c->timers ;
+        c->after.q = c->q ;
+        c->after.msg.kind = TO_TIMEOUT ;
+        c->after.msg.gen = c->gen ;
+        pt_create(pt_get_pt(c), &c->after.pt_thread, after_thr, &c->after) ;
+
+        /* take the first reply or current timeout, skipping stale ones */
+        for (;;) {
+            pt_call(c, tmsgq_receive, &c->queue_env, c->q, &c->msg) ;
+            if (c->msg.kind != TO_TIMEOUT || c->msg.gen == c->gen) {
+                break ;
+            }
+            c->stale++ ;
+        }
+
+        /* if the reply won, stop the timer, if it hasn't already fired */
+        if (c->msg.kind == TO_REPLY) {
+            (void)pt_timer_cancel(c->timers, &c->after.timer_env) ;
+            (void)pt_kill(&c->after.pt_thread) ;
+        }
+        c->result[c->round] = c->msg.kind ;
+    }
+    return PT_DONE ;
+}
+
+static void
+test_queue_timeout(void)
+{
+    protothread_t const pt = protothread_create() ;
+    pt_timers_t timers ;
+    tmsg_t slots[4] ;
+    tmsgq_t q ;
+    timeout_context_t w ;
+    tmsg_t reply ;
+
+    reply.kind = TO_REPLY ;
+    reply.gen = 0 ;
+
+    /* first the reply wins, then the timeout does */
+    pt_timers_init(&timers, 0) ;
+    tmsgq_init(&q, slots, 4) ;
+    memset(&w, 0, sizeof(w)) ;
+    w.timers = &timers ;
+    w.q = &q ;
+    pt_create(pt, &w.pt_thread, timeout_waiter_thr, &w) ;
+    while (protothread_run(pt)) ;
+    pt_timer_run(pt, &timers, 2) ;
+    check(tmsgq_try_send(pt, &q, &reply)) ;
+    while (protothread_run(pt)) ;
+    check(w.result[0] == TO_REPLY) ;
+    pt_timer_run(pt, &timers, 12) ;         /* the second wait's deadline */
+    while (protothread_run(pt)) ;
+    check(w.result[1] == TO_TIMEOUT) ;
+    check(!pt_is_alive(&w.pt_thread)) ;
+    /* the first timer was stopped, so nothing is left over */
+    pt_timer_run(pt, &timers, 100) ;
+    while (protothread_run(pt)) ;
+    check(tmsgq_count(&q) == 0) ;
+    check(w.stale == 0) ;
+
+    /* Now the timer fires just before the reply arrives, so its TIMEOUT is
+     * queued behind the reply. The reply still wins, and the next wait finds
+     * the leftover TIMEOUT and discards it.
+     */
+    pt_timers_init(&timers, 0) ;
+    tmsgq_init(&q, slots, 4) ;
+    memset(&w, 0, sizeof(w)) ;
+    w.timers = &timers ;
+    w.q = &q ;
+    pt_create(pt, &w.pt_thread, timeout_waiter_thr, &w) ;
+    while (protothread_run(pt)) ;
+    pt_timer_run(pt, &timers, 10) ;         /* the helper is ready first */
+    check(tmsgq_try_send(pt, &q, &reply)) ; /* then the waiter */
+    while (protothread_run(pt)) ;
+    check(w.result[0] == TO_REPLY) ;
+    check(w.stale == 1) ;
+    check(tmsgq_try_send(pt, &q, &reply)) ;
+    while (protothread_run(pt)) ;
+    check(w.result[1] == TO_REPLY) ;
+    check(!pt_is_alive(&w.pt_thread)) ;
+    pt_timer_run(pt, &timers, 100) ;
+    while (protothread_run(pt)) ;
+    check(tmsgq_count(&q) == 0) ;
+    protothread_free(pt) ;
+}
+
 /* the predefined queue of void * */
 static void
 test_queue_void(void)
@@ -1991,6 +2132,7 @@ main()
     test_queue_select() ;
     test_queue_void() ;
     test_queue_of_queues() ;
+    test_queue_timeout() ;
     test_version() ;
 #ifdef PT_TEST_IRQ
     test_interrupts() ;

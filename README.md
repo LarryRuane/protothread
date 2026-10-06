@@ -1079,11 +1079,40 @@ Like the semaphore, a queue isn't strictly fair: a protothread that finds it non
 ```c
 typedef struct {
     enum { REPLY, STATUS, TIMEOUT } kind;
+    unsigned int gen;               /* for timeouts; see below */
     union { struct reply reply; struct status status; } u;
 } msg_t;
 ```
 
-A timeout is just another sender: a small protothread that calls `pt_sleep()` and then sends a `TIMEOUT` message, which is all Go's `time.After()` does.
+**Timeouts.** A timeout is just another sender: a small protothread that sleeps, using `pt_sleep()` from [timers](#timers), and then sends a `TIMEOUT` message into the same queue. That is all Go's `time.After()` does:
+
+```c
+static pt_t
+after_thr(void * const env)
+{
+    after_context_t * const c = env;
+    pt_resume(c);
+    pt_sleep(c, &c->timer_env, c->timers, 10);
+    pt_call(c, msgq_send, &c->queue_env, c->q, &c->msg);
+    return PT_DONE;
+}
+```
+
+Go gets one thing for free here. Its timeout has a channel of its own, so when the reply wins, that channel is simply forgotten. Here the timeout shares the reply's queue, so two things are needed. When the reply wins, stop the timer, which also frees its context for the next wait. And since the timer may already have sent by then, number each wait, and skip a `TIMEOUT` left over from an earlier one:
+
+```c
+c->gen++;
+c->after.msg.kind = TIMEOUT;
+c->after.msg.gen = c->gen;
+pt_create(pt_get_pt(c), &c->after.pt_thread, after_thr, &c->after);
+do {
+    pt_call(c, msgq_receive, &c->queue_env, &q, &c->msg);
+} while (c->msg.kind == TIMEOUT && c->msg.gen != c->gen);
+if (c->msg.kind != TIMEOUT) {
+    pt_timer_cancel(&timers, &c->after.timer_env);
+    pt_kill(&c->after.pt_thread);
+}
+```
 
 When a receiver wants one kind of message while others wait their turn, it can look before it takes. `wait_send()` blocks only until something new arrives, so messages it has already passed over don't wake it again:
 
