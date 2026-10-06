@@ -269,6 +269,50 @@ The event-driven version of the consumer is a two-state machine, a `switch` on "
 
 The difference grows with the sequence. Every `pt_wait()` in a protothread is a state that the event-driven version has to name, store and dispatch on by hand, and naming is the hard part: finding a good name for every intermediate state of a long sequence is often harder than writing the sequence. A protothread's state is its position in the function, and a position needs no name. `pt_resume()` is the `switch` you no longer have to write.
 
+### The same, with a queue ###
+
+The mailbox above is a queue of one, written by hand. With a [message queue](#message-queues) from `protothread_queue.h`, the two protothreads shrink to their loops:
+```
+ PT_QUEUE_DEFINE(intq, int)
+
+ typedef struct {
+     pt_thread_t pt_thread;
+     pt_func_t pt_func;
+     pt_queue_env_t queue_env;
+     intq_t * q;
+     int i;
+     int value;
+ } qpc_context_t;
+
+ static pt_t
+ producer_thr(void * const env)
+ {
+     qpc_context_t * const c = env;
+     pt_resume(c);
+
+     for (c->i = 1; c->i <= 100; c->i++) {
+         pt_call(c, intq_send, &c->queue_env, c->q, &c->i);
+     }
+     return PT_DONE;
+ }
+
+ static pt_t
+ consumer_thr(void * const env)
+ {
+     qpc_context_t * const c = env;
+     pt_resume(c);
+
+     for (c->i = 1; c->i <= 100; c->i++) {
+         pt_call(c, intq_receive, &c->queue_env, c->q, &c->value);
+         assert(c->value == c->i);
+     }
+     return PT_DONE;
+ }
+```
+The queue needs storage, `int slots[4]; intq_t q; intq_init(&q, slots, 4);`, and the rest of the test is as before.
+
+The two versions differ in what moves. In the mailbox version the data stays put and the protothreads come to it: each one checks the mailbox, waits on it, changes it, and wakes the other. In the queue version the protothreads stay put, each in its own loop, and the data moves, one value at a time, from the producer to the consumer, as if along a wire between them. The waiting and waking haven't gone away, they're inside `send` and `receive`, but neither protothread mentions the other any more. And with room for four values, the producer can run up to four ahead before it has to wait, so the two take turns less often: passing 100 values takes 51 protothread runs here, against 201 through the mailbox.
+
 ## Bare-metal and embedded use ##
 
 Protothreads were invented for memory-constrained embedded systems, and this implementation is usable on a bare microcontroller: no operating system, no heap, and no C library.
