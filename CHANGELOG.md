@@ -25,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The blocking macros name their goto labels with `__COUNTER__` instead of
+  `__LINE__`. Several can now share a source line, and a user macro can contain
+  more than one, both of which were a `duplicate label` compile error before.
+  `__COUNTER__` is provided by every gcc and clang, which the library already
+  requires for computed goto.
 - Releasing a reader-writer lock returns its environment to an idle state, so
   the lock can tell a live request from a finished one. Internal, but it means
   a `pt_lock_env_t` must be zeroed or have been used with that lock before
