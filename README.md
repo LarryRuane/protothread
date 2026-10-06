@@ -3,11 +3,15 @@
 [![CI](https://github.com/LarryRuane/protothread/actions/workflows/ci.yml/badge.svg)](https://github.com/LarryRuane/protothread/actions/workflows/ci.yml)
 
 
-[Protothreads](http://en.wikipedia.org/wiki/Protothreads) is a programming model invented by Adam Dunkels that combines the advantages of _event-driven_ (sometimes also called _state machine_) programming and _threaded_ programming. The trick underneath, jumping back into the middle of a function, goes back to Tom Duff's [Duff's device](https://en.wikipedia.org/wiki/Duff%27s_device) (1983), a `switch` that jumps into the middle of a loop, which Simon Tatham turned into [coroutines in C](https://www.chiark.greenend.org.uk/~sgtatham/coroutines.html) before Dunkels built protothreads on it. The main advantage of the event-driven model is efficiency, both speed and memory usage. The main advantage of the threaded model is [algorithm clarity](http://dunkels.com/adam/dunkels06protothreads.pdf). Protothreads gives you both. A protothread is an extremely lightweight thread. As with event-driven programming, there is a single stack; but like threaded programming, a function can (at least conceptually) block. This protothreads implementation:
+[Protothreads](http://en.wikipedia.org/wiki/Protothreads) is a programming model invented by Adam Dunkels that combines the advantages of _event-driven_ (sometimes also called _state machine_) programming and _threaded_ programming. The trick underneath, jumping back into the middle of a function, goes back to Tom Duff's [Duff's device](https://en.wikipedia.org/wiki/Duff%27s_device) (1983), a `switch` that jumps into the middle of a loop, which Simon Tatham turned into [coroutines in C](https://www.chiark.greenend.org.uk/~sgtatham/coroutines.html) before Dunkels built protothreads on it. The main advantage of the event-driven model is efficiency, both speed and memory usage. The main advantage of the threaded model is [algorithm clarity](http://dunkels.com/adam/dunkels06protothreads.pdf). Protothreads gives you both. A protothread is an extremely lightweight thread. As with event-driven programming, there is a single stack, shared by every protothread; but like threaded programming, a function can (at least conceptually) block. (That is what "stackless" means here: not no stack at all, but no stack of each thread's own.) This protothreads implementation:
   * is not an implementation of POSIX threads or any other standard API
   * does not require assembly-language code or use setjmp/longjmp
   * is independent of CPU architecture
   * schedules threads non-preemptibly and deterministically.
+
+### Concurrency, not parallelism ###
+
+If protothreads never run two things at once, why threads at all? Because running things at once was never the main reason for threads. Rob Pike's distinction is the useful one: [concurrency is not parallelism](https://go.dev/blog/waza-talk). Concurrency is *dealing with* many things at once; parallelism is *doing* many things at once. A program that talks to a sensor, a radio and a user interface has to deal with all three whether it has one core or eight, and threads let each of those activities be written as a sequence of steps, in the order they happen, instead of being taken apart into callbacks and state variables. That clarity is what protothreads keep, for a few dozen bytes per thread. For parallelism, pair them with ordinary threads; see [Protothreads on a multi-core system](#protothreads-on-a-multi-core-system).
 
 ### Why another protothreads implementation? ###
 
@@ -34,7 +38,7 @@ The cost of nesting and arbitrary blocking is that this implementation uses [gcc
 | create + destroy | 2.8 ns | 28,852 ns | **10,300x** |
 | memory per thread | 56 bytes | 16,384 bytes | **293x** |
 
-Protothreads are faster here because they do less: no kernel transition, no scheduler, no stack, no mutex locking. POSIX threads provide preemption and real parallelism, which protothreads do not. See [Memory overhead and performance](#memory-overhead-and-performance-benchmarks) for a detailed comparison and [Protothreads on a multi-core system](#protothreads-on-a-multi-core-system) for using both together.
+Protothreads are faster here because they do less: no kernel transition, no scheduler, no per-thread stack, no mutex locking. POSIX threads provide preemption and real parallelism, which protothreads do not. See [Memory overhead and performance](#memory-overhead-and-performance-benchmarks) for a detailed comparison and [Protothreads on a multi-core system](#protothreads-on-a-multi-core-system) for using both together.
   * optional semaphores, reader-writer locks and timers, each in its own header and built entirely on the core
   * about 1000 lines of test code
   * gdb (debugger) macros to print the stack traces of a given protothread or all protothreads.
@@ -56,7 +60,7 @@ cmake -S . -B build && cmake --build build && ./build/pttest
 
 ### The API ###
 
-The core is twenty entries in the following two tables, all in `protothread.h`. The `protothread_` prefix is used for operations on the overall protothread object; the `pt_` prefix is for operations involving specific protothreads. Everything else in `protothread.h` is internal and has a `pt_i_` or `PT_I_` prefix, so anything *without* one of those prefixes is API you can rely on, and anything with one may change in a later release.
+The core is twenty-one entries in the following two tables, all in `protothread.h`. The `protothread_` prefix is used for operations on the overall protothread object; the `pt_` prefix is for operations involving specific protothreads. Everything else in `protothread.h` is internal and has a `pt_i_` or `PT_I_` prefix, so anything *without* one of those prefixes is API you can rely on, and anything with one may change in a later release.
 
 **The scheduler**
 
@@ -80,6 +84,7 @@ The core is twenty entries in the following two tables, all in `protothread.h`. 
 |---|---|
 | `pt_resume(c)` | first statement of every protothread function |
 | `pt_wait(c, channel)` | block until `channel` is signalled |
+| `pt_wait_until(c, channel, cond)` | the same, but safe against an interrupt handler |
 | `pt_yield(c)` | let other ready protothreads run, then continue |
 | `pt_call(c, func, child_c, ...)` | call a protothread function that may block |
 | `pt_call_waited(c)` | did that `pt_call()` block? |
@@ -94,7 +99,7 @@ That is everything you need to start.
 
 For contrast, POSIX [`pthread.h`](https://pubs.opengroup.org/onlinepubs/9699919799.orig/basedefs/pthread.h.html) declares 101 functions. That isn't a fair comparison, because pthreads gives you preemption, real parallelism, priorities and synchronization that works between processes, and none of that is on offer here. But most of that count isn't the extra power, it's the configuration the extra power needs. Forty-five of those functions do nothing but manage attribute objects, thirty-five of them `get`/`set` pairs, and another ten are `init` and `destroy` for the synchronization objects themselves. What's left brings its own vocabulary: detach state, scheduling scope and inheritance, cancellation state and type, cleanup handler stacks, thread-specific data keys with destructors, four mutex types, three priority protocols, and process-shared variants of most of it.
 
-Nearly all of that exists because a pthread can be interrupted between any two instructions. A protothread can't. It runs until it blocks, at a line you can point at, so there is no priority to invert, no cancellation point to reason about, and no stack to size. Those functions aren't missing here so much as they have nothing to do.
+Nearly all of that exists because a pthread can be interrupted between any two instructions. A protothread can't. It runs until it blocks, at a line you can point at, so there is no priority to invert, no cancellation point to reason about, and no per-thread stack to size. Those functions aren't missing here so much as they have nothing to do.
 
 These three headers built on it are entirely optional, but provide commonly-used abstractions:
 
@@ -104,7 +109,9 @@ These three headers built on it are entirely optional, but provide commonly-used
 
 Each is ordinary protothread code over `pt_wait()` and `pt_broadcast()`, as much a demonstration of what the core can express as a facility to use. They are described under [Built on top](#built-on-top-semaphores-timers-and-locks).
 
-## Threads without stacks ##
+## Threads that share one stack ##
+
+Protothreads are often called *stackless* threads, which can sound as though there is no stack at all. There is: exactly one, the ordinary C stack, and every protothread runs on it, just as every handler in an event-driven program does. What a protothread lacks is a stack of its *own*, so nothing it leaves on that shared stack survives when it blocks.
 
 The key concept of any protothreads implementation is that when a function wants to wait for an event to occur (that is, suspend itself and let other threads run), it saves its current location within the function (conceptually its line number or program counter), and returns back to the scheduler or idle loop, releasing use of the stack. The scheduler runs a different thread, handles interrupts or waits for an external event to occur. When the event occurs, the scheduler calls the function in the usual way, and the first thing the function does is `goto` the previously saved location. This location might be within levels of nested loops and `if` statements.
 
@@ -257,6 +264,10 @@ The main test function allocates the overall protothread object or instance (`pt
  }
 ```
 
+The event-driven version of the consumer is a two-state machine, a `switch` on "mailbox empty" and "mailbox full", and for two states that's perfectly readable. But notice what's gone. The producer and the consumer are each a `for` loop, which is exactly how you would describe what they do, and in the event-driven version neither loop appears. The only loop is the one around the `switch` that dispatches events, which is the job `protothread_run()` does here. Each activity's own loop has been turned inside out into transitions between states, so you have to reconstruct it to see that it is a loop at all.
+
+The difference grows with the sequence. Every `pt_wait()` in a protothread is a state that the event-driven version has to name, store and dispatch on by hand, and naming is the hard part: finding a good name for every intermediate state of a long sequence is often harder than writing the sequence. A protothread's state is its position in the function, and a position needs no name. `pt_resume()` is the `switch` you no longer have to write.
+
 ## Bare-metal and embedded use ##
 
 Protothreads were invented for memory-constrained embedded systems, and this implementation is usable on a bare microcontroller: no operating system, no heap, and no C library.
@@ -300,9 +311,19 @@ Note the wording: "lists stay intact" is not the same as "correct". There is a s
         pt_wait(c, job)    <--- enqueues, and sleeps forever
 ```
 
-The predicate test and `pt_wait()`'s enqueue are not atomic with respect to another context, and your code can't make them so with a critical section, because `pt_wait()` returns from the function in between. (The library's own `pt_sleep()` does it internally, which is what makes `pt_timer_run()` safe to call from an interrupt.) Among protothreads this race cannot happen -- nothing runs in between -- which is exactly why it is easy to overlook when an interrupt handler is added later.
+The predicate test and `pt_wait()`'s enqueue are not atomic with respect to another context, and writing them as two statements can't make them so, because `pt_wait()` returns from the function in between. Among protothreads this race cannot happen -- nothing runs in between -- which is exactly why it is easy to overlook when an interrupt handler is added later.
 
-The fix is to not signal from the outside at all. Have the handler record what happened -- set a flag, push onto a queue -- and have the loop that owns `protothread_run()` turn that into a `pt_signal()` **between** protothread runs. At that point no protothread is mid-execution, so every waiter has finished enqueuing:
+There are two ways out, and they can be mixed.
+
+**Wait with `pt_wait_until()`**, which does the test and the enqueue inside one critical section, so an interrupt landing between them finds the protothread already enqueued:
+
+```c
+pt_wait_until(c, job, job->done);
+```
+
+That needs `PT_CRITICAL_*` defined, and the handler must set `job->done` before it signals. The library uses this for its own two cases, which is what makes `pt_timer_run()` safe to call from a tick interrupt and `pt_kill()` safe against a protothread waiting in `pt_join()`.
+
+**Or don't signal from the outside at all.** Have the handler record what happened -- set a flag, push onto a queue -- and have the loop that owns `protothread_run()` turn that into a `pt_signal()` **between** protothread runs. At that point no protothread is mid-execution, so every waiter has finished enqueuing:
 
 ```c
 for (;;) {
@@ -318,7 +339,7 @@ for (;;) {
 
 Check for work with interrupts masked before waiting. Otherwise an interrupt that lands after the last check but before `wait_for_interrupt()` is serviced right there, and the loop sleeps until some later interrupt with work already waiting. On Cortex-M, `__WFI()` with `PRIMASK` set still wakes for a pending interrupt, which is what makes this work, and most other cores have an equivalent.
 
-`demo/pool.c` is a complete working program built this way, and `demo/helper_thread.c` uses a self-pipe to the same end. A pleasant side effect: if signals are only ever raised from the scheduler's own context, the lists are never touched concurrently and `PT_CRITICAL_*` is not needed at all.
+`demo/pool.c` is a complete working program built this way, and `demo/helper_thread.c` uses a self-pipe to the same end. A pleasant side effect: if signals are only ever raised from the scheduler's own context, the lists are never touched concurrently and `PT_CRITICAL_*` is not needed at all. That is the reason to prefer this one where it fits; `pt_wait_until()` is for when the handler really must signal.
 
 ## How does it work? ##
 
@@ -585,7 +606,9 @@ For comparison, an RTOS task typically costs a control block of about 90 bytes p
 
 There is a second saving that the table cannot show: you do not have to guess. Sizing a stack for a POSIX thread or an RTOS task means predicting its worst-case depth, which depends on the compiler, the optimization level, inlining decisions and the ABI. A debug build generally needs more stack than the optimized build the size was measured against, so the `-O0` binary you are stepping through can overflow a stack that production never troubles. Guess high and the waste is multiplied by the number of threads; guess low and you get an intermittent corruption that is hard to attribute to the thread that caused it.
 
-Protothreads do not abolish that question, but they reduce it from N instances of it to one. There is a single stack, sized once for the deepest `pt_call()` chain plus whatever your interrupt handlers need, with no per-thread safety margin multiplied by the thread count. Everything that has to survive blocking lives in the context structure instead, and the compiler will tell you exactly how big that is with `sizeof`.
+Protothreads come close to abolishing the question, because the difference between one stack and two is larger than the difference between two and twenty. With a single stack there is usually nothing to pre-size: in the classic layout the stack grows down from the top of RAM while the heap, if there is one, grows up from the end of static data, and the free space between them belongs to whichever needs it at the moment. Many vendor linker scripts still name a minimum stack size, but only to check at link time that enough RAM is left over. As soon as there is a second stack, that stops working: each one needs a region of its own, fixed in advance at its worst case, and space one isn't using can't help the other.
+
+Everything that has to survive blocking lives in the context structure instead, and the compiler will tell you exactly how big that is with `sizeof`. What is still worth knowing is the depth of the deepest `pt_call()` chain plus whatever your interrupt handlers need, since on a microcontroller without an MPU a stack that runs into the heap is rarely detected. gcc's `-fstack-usage` reports each function's frame.
 
 Note that `PT_DEBUG` adds four fields to `pt_func_t` and one to `pt_thread_t` for the debugger macros, raising the minimum per-protothread cost from 56 to 96 bytes on a 64-bit target. It is on by default; turn it off in production builds.
 
@@ -611,7 +634,7 @@ The context switch benchmark is two threads handing a token back and forth a mil
 
 Read these as orders of magnitude, not as digits: the absolute numbers move with the machine, the kernel, and its speculative-execution mitigations, and the pthread side is the part that moves most.
 
-**This is not an apples-to-apples comparison, and it should not be read as one.** POSIX threads give you preemption and real parallelism across cores; protothreads give you neither. What the benchmark measures is the cost of the mechanism itself -- what you pay, per operation, for the ability to write code that blocks. Protothreads win by these margins because they do enormously less: no kernel transition, no scheduler, no stack. Where that trade is a good one -- a state machine per connection, an event loop, an embedded system with no MMU -- the ratios above are the reason to care. Where you need to keep four cores busy, they are beside the point.
+**This is not an apples-to-apples comparison, and it should not be read as one.** POSIX threads give you preemption and real parallelism across cores; protothreads give you neither. What the benchmark measures is the cost of the mechanism itself -- what you pay, per operation, for the ability to write code that blocks. Protothreads win by these margins because they do enormously less: no kernel transition, no scheduler, no per-thread stack. Where that trade is a good one -- a state machine per connection, an event loop, an embedded system with no MMU -- the ratios above are the reason to care. Where you need to keep four cores busy, they are beside the point.
 
 ## Versioning ##
 
@@ -747,6 +770,10 @@ These are macros (designed to look and act like function calls) whose first argu
 >
 > Block until a signal is sent to the given channel. The channel is an arbitrary `void *` value which is usually chosen to be the address of a data structure whose state change the thread is interested. A channel itself has no state; the protothread system never uses the channel as an address (does not dereference it). Typically, after this function returns the condition being waited for is re-evaluated. Analogous to [POSIX pthread\_cond\_wait()](http://www.opengroup.org/onlinepubs/009695399/functions/pthread_cond_wait.html).
 
+> `void pt_wait_until(struct context_t *c, void *channel, cond)`
+>
+> Block until `cond` is true, testing it and enqueueing on `channel` in one critical section. That is the difference from `while (!cond) pt_wait(c, channel)`, where an interrupt handler that makes `cond` true and signals in between is missed, and the protothread blocks forever; see [Lost wakeups](#lost-wakeups). `cond` is evaluated more than once, so it must have no side effects, and a handler must write whatever makes it true *before* it signals. Between protothreads the two forms are equivalent, since nothing runs in between. Note that Dunkels' `PT_WAIT_UNTIL` is different: it re-tests its condition whenever the application calls the protothread, while this one re-tests only when `channel` is signalled, so whatever makes `cond` true must also signal it.
+
 > `void pt_yield(struct context_t *c)`
 >
 > Reschedule the current thread and release the CPU. It is like `pt_wait()` on a channel that is immediately signaled. The current thread queues itself behind all ready to run threads and returns control to the scheduler.
@@ -795,7 +822,7 @@ What matters is overlap, not which thread: before the scheduler first runs there
 
 > `bool_t pt_kill(pt_thread_t *)`
 >
-> Remove a thread from whatever list it is on, so that it is never scheduled again. Returns TRUE if the thread was found (it is not an error to kill a thread that has already exited). This is dangerous unless the thread was written to expect it: the thread is stopped wherever it happens to be blocked, and any resources it holds -- allocated contexts, semaphores, locks -- are not released. Two places it can be blocked need something done first. A sleeping thread must be taken off the timer list with `pt_timer_cancel()`. A thread waiting for a reader-writer lock must not be killed at all: it stays in the lock's queue, and when its turn comes the lock is granted to it and never released, so every later request waits forever. A thread waiting on a semaphore is safe to kill. Do not call this on the currently running thread. Any cleanup is up to the caller, once this has returned TRUE.
+> Remove a thread from whatever list it is on, so that it is never scheduled again. Returns TRUE if the thread was found (it is not an error to kill a thread that has already exited). This is dangerous unless the thread was written to expect it: the thread is stopped wherever it happens to be blocked, and any resources it holds -- allocated contexts, semaphores, locks -- are not released. Two places it can be blocked need something done first. A sleeping thread must be taken off the timer list with `pt_timer_cancel()`. A thread that might be using a reader-writer lock must be taken out of it with `pt_lock_cancel()`, whether it is queued for the lock or holding it; otherwise the lock is eventually granted to a thread that never releases it, and every later request waits forever. A thread waiting on a semaphore is safe to kill. Do not call this on the currently running thread. Any cleanup is up to the caller, once this has returned TRUE.
 
 ### Protothread system setup and teardown ###
 
@@ -936,7 +963,11 @@ for (;;) {
 >
 > Release the lock. Guaranteed not to block.
 
-Requests are granted in arrival order, so a steady stream of readers cannot starve a waiting writer. Consecutive readers at the head of the queue are all started together. Unlike the semaphore, the lock is fair: a release hands it directly to the next request before waking it, so a protothread that releases and immediately reacquires waits its turn. The cost is the convoy described above. The same queue is why a protothread waiting for the lock must never be `pt_kill()`ed: its request stays queued, and is eventually granted to a thread that will never release it.
+> `bool_t pt_lock_cancel(pt_lock_env_t *lock_env, pt_lock_t *lock)`
+>
+> Take a request out of the lock, whether it is still queued or already granted, and start whatever that lets proceed. Returns TRUE if the lock still knew about the request. This does **not** wake the protothread, so it is for use before `pt_kill()`ing or freeing one that might be using the lock, exactly as `pt_timer_cancel()` is for one that might be sleeping. Guaranteed not to block.
+
+Requests are granted in arrival order, so a steady stream of readers cannot starve a waiting writer. Consecutive readers at the head of the queue are all started together. Unlike the semaphore, the lock is fair: a release hands it directly to the next request before waking it, so a protothread that releases and immediately reacquires waits its turn. The cost is the convoy described above. The same queue is why a protothread that might be using the lock needs `pt_lock_cancel()` before it is killed or freed: its request would otherwise stay queued, and be granted to a thread that never releases it.
 
 There's no upgrade call, because you don't need one. Release the read lock, acquire the write lock, and ask whether that blocked:
 
