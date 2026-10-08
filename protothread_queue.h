@@ -14,20 +14,20 @@
 
 /* Message queue. The public API; pt_i_ names are internal.
  *
- * PT_QUEUE_DEFINE(name, type) generates a queue of <type> named name_t.
- * The three blocking functions are protothread functions, so like any other
- * they are called through pt_call(), as pt_call(c, name_send, env, q, item):
- *   name_send(queue_env, q, item_p)     block while full, then append
- *   name_receive(queue_env, q, item_p)  block while empty, then take oldest
- *   name_wait_send(queue_env, q)        block until another item is sent
- * The rest never block, and are called directly:
+ * PT_QUEUE_DEFINE(name, type) generates a queue of <type> named name_t, and
+ * these functions, which never block:
  *   name_init(q, slots, capacity)       use slots[capacity] as storage
  *   name_try_send(s, q, item_p)         append if room; true if sent
  *   name_try_receive(s, q, item_p)      take oldest if any; true if taken
  *   name_count(q)                       number of items queued
  *   name_at(q, i)                       pointer to the i-th oldest item
  *   name_remove(s, q, i, item_p)        take the i-th oldest, keep order
- *   pt_queue_env_t                      one per protothread that blocks
+ *   name_sent(q)                        count of items ever sent; wraps
+ *
+ * The blocking calls are macros, like pt_wait(), and work on any queue:
+ *   pt_queue_send(c, q, item_p)         block while full, then append
+ *   pt_queue_receive(c, q, item_p)      block while empty, then take oldest
+ *   pt_queue_wait_send(c, q, seen)      block until name_sent(q) != seen
  *
  * pt_queue_t and pt_queue_*() are a predefined queue of void *.
  *
@@ -37,12 +37,6 @@
  * interrupt handler when the PT_CRITICAL_* macros are defined; everything
  * else is for thread context.
  */
-
-/* One per protothread that blocks on a queue, in its context structure */
-typedef struct pt_queue_env_s {
-    pt_func_t pt_func ;
-    unsigned int seen ;             /* the send count wait_send() started at */
-} pt_queue_env_t ;
 
 /* The untyped part of every queue: indices and counts, never the items.
  * Receivers wait on &sent, senders wait on &head, so that a send wakes only
@@ -99,15 +93,51 @@ pt_i_queue_took_newest(pt_i_queue_t * const q)
     q->count-- ;
 }
 
+/* read with interrupts masked, since on a small target this can be two loads */
+static inline unsigned int
+pt_i_queue_sent(pt_i_queue_t const * const q)
+{
+    pt_i_critical_t const saved = PT_CRITICAL_ENTER() ;
+    unsigned int const sent = q->sent ;
+    PT_CRITICAL_EXIT(saved) ;
+    return sent ;
+}
+
+/* Append *item_p if there is room, and set ok to whether it was. The copy is
+ * by assignment from the queue's own element type, so it is type-checked.
+ */
+#define pt_i_queue_put(queue, item_p, ok) \
+    do { \
+        pt_i_critical_t const pt_i_qsaved = PT_CRITICAL_ENTER() ; \
+        (ok) = (queue)->q.count < (queue)->q.capacity ; \
+        if (ok) { \
+            (queue)->slots[pt_i_queue_slot(&(queue)->q, (queue)->q.count)] = \
+                *(item_p) ; \
+            pt_i_queue_appended(&(queue)->q) ; \
+        } \
+        PT_CRITICAL_EXIT(pt_i_qsaved) ; \
+    } while (0)
+
+/* Take the oldest item into *item_p, if there is one, and set ok to whether
+ * there was.
+ */
+#define pt_i_queue_take(queue, item_p, ok) \
+    do { \
+        pt_i_critical_t const pt_i_qsaved = PT_CRITICAL_ENTER() ; \
+        (ok) = (queue)->q.count > 0 ; \
+        if (ok) { \
+            *(item_p) = (queue)->slots[(queue)->q.head] ; \
+            pt_i_queue_took_oldest(&(queue)->q) ; \
+        } \
+        PT_CRITICAL_EXIT(pt_i_qsaved) ; \
+    } while (0)
+
 /* An instance needn't use every function it generates, and clang warns about
  * unused static functions expanded outside a header.
  */
 #define PT_I_MAYBE_UNUSED __attribute__((__unused__))
 
-/* Generate a queue of <type> named name_t, and its functions. The blocking
- * ones are a wait on the untyped part followed by the non-blocking one, and
- * retry if another protothread got there first.
- */
+/* Generate a queue of <type> named name_t, and its non-blocking functions */
 #define PT_QUEUE_DEFINE(name, type) \
 \
 typedef struct name ## _s { \
@@ -129,6 +159,12 @@ name ## _count(name ## _t const * const q) \
     return q->q.count ; \
 } \
 \
+static inline PT_I_MAYBE_UNUSED unsigned int \
+name ## _sent(name ## _t const * const q) \
+{ \
+    return pt_i_queue_sent(&q->q) ; \
+} \
+\
 static inline PT_I_MAYBE_UNUSED type * \
 name ## _at(name ## _t * const q, unsigned int const i) \
 { \
@@ -140,18 +176,24 @@ static inline PT_I_MAYBE_UNUSED bool_t \
 name ## _try_send(protothread_t const s, name ## _t * const q, \
         type const * const item) \
 { \
-    bool_t sent = false ; \
-    pt_i_critical_t const saved = PT_CRITICAL_ENTER() ; \
-    if (q->q.count < q->q.capacity) { \
-        q->slots[pt_i_queue_slot(&q->q, q->q.count)] = *item ; \
-        pt_i_queue_appended(&q->q) ; \
-        sent = true ; \
-    } \
-    PT_CRITICAL_EXIT(saved) ; \
+    bool_t sent ; \
+    pt_i_queue_put(q, item, sent) ; \
     if (sent) { \
         pt_broadcast(s, &q->q.sent) ; \
     } \
     return sent ; \
+} \
+\
+static inline PT_I_MAYBE_UNUSED bool_t \
+name ## _try_receive(protothread_t const s, name ## _t * const q, \
+        type * const item) \
+{ \
+    bool_t taken ; \
+    pt_i_queue_take(q, item, taken) ; \
+    if (taken) { \
+        pt_broadcast(s, &q->q.head) ; \
+    } \
+    return taken ; \
 } \
 \
 static inline PT_I_MAYBE_UNUSED bool_t \
@@ -186,55 +228,38 @@ name ## _remove(protothread_t const s, name ## _t * const q, \
         pt_broadcast(s, &q->q.head) ; \
     } \
     return taken ; \
-} \
-\
-static inline PT_I_MAYBE_UNUSED bool_t \
-name ## _try_receive(protothread_t const s, name ## _t * const q, \
-        type * const item) \
-{ \
-    return name ## _remove(s, q, 0, item) ; \
-} \
-\
-static inline PT_I_MAYBE_UNUSED pt_t \
-name ## _send(pt_queue_env_t * const c, name ## _t * const q, \
-        type const * const item) \
-{ \
-    pt_resume(c) ; \
-    for (;;) { \
-        pt_wait_until(c, &q->q.head, q->q.count < q->q.capacity) ; \
-        if (name ## _try_send(pt_get_pt(c), q, item)) { \
-            return PT_DONE ; \
-        } \
-    } \
-} \
-\
-static inline PT_I_MAYBE_UNUSED pt_t \
-name ## _receive(pt_queue_env_t * const c, name ## _t * const q, \
-        type * const item) \
-{ \
-    pt_resume(c) ; \
-    for (;;) { \
-        pt_wait_until(c, &q->q.sent, q->q.count > 0) ; \
-        if (name ## _try_receive(pt_get_pt(c), q, item)) { \
-            return PT_DONE ; \
-        } \
-    } \
-} \
-\
-/* the send count is read with interrupts masked, since on a small target \
- * an unsigned int can take two loads */ \
-static inline PT_I_MAYBE_UNUSED pt_t \
-name ## _wait_send(pt_queue_env_t * const c, name ## _t * const q) \
-{ \
-    pt_resume(c) ; \
-    { \
-        pt_i_critical_t const saved = PT_CRITICAL_ENTER() ; \
-        c->seen = q->q.sent ; \
-        PT_CRITICAL_EXIT(saved) ; \
-    } \
-    pt_wait_until(c, &q->q.sent, q->q.sent != c->seen) ; \
-    return PT_DONE ; \
 }
+
+/* The blocking calls wait in the caller's context, as pt_wait() does, and
+ * retry if another protothread or an interrupt got there first. q and item_p
+ * are evaluated more than once, so they must not have side effects.
+ */
+#define pt_queue_send(c, queue, item_p) \
+    do { \
+        bool_t pt_i_ok ; \
+        do { \
+            pt_wait_until(c, &(queue)->q.head, \
+                (queue)->q.count < (queue)->q.capacity) ; \
+            pt_i_queue_put(queue, item_p, pt_i_ok) ; \
+        } while (!pt_i_ok) ; \
+        pt_broadcast(pt_get_pt(c), &(queue)->q.sent) ; \
+    } while (0)
+
+#define pt_queue_receive(c, queue, item_p) \
+    do { \
+        bool_t pt_i_ok ; \
+        do { \
+            pt_wait_until(c, &(queue)->q.sent, (queue)->q.count > 0) ; \
+            pt_i_queue_take(queue, item_p, pt_i_ok) ; \
+        } while (!pt_i_ok) ; \
+        pt_broadcast(pt_get_pt(c), &(queue)->q.head) ; \
+    } while (0)
+
+/* Read seen from name_sent() before looking at the queue, so that anything
+ * sent after that, even by an interrupt, ends the wait.
+ */
+#define pt_queue_wait_send(c, queue, seen) \
+    pt_wait_until(c, &(queue)->q.sent, (queue)->q.sent != (seen))
 
 PT_QUEUE_DEFINE(pt_queue, void *)
 

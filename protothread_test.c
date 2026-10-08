@@ -1457,7 +1457,6 @@ PT_QUEUE_DEFINE(intq, int)
 typedef struct {
     pt_thread_t pt_thread ;
     pt_func_t pt_func ;
-    pt_queue_env_t queue_env ;
     intq_t * q ;
     int i ;
     int got ;
@@ -1470,7 +1469,7 @@ intq_producer_thr(env_t const env)
     intq_context_t * const c = env ;
     pt_resume(c) ;
     for (c->i = 1; c->i <= 100; c->i++) {
-        pt_call(c, intq_send, &c->queue_env, c->q, &c->i) ;
+        pt_queue_send(c, c->q, &c->i) ;
         c->waited += pt_call_waited(c) ;
     }
     return PT_DONE ;
@@ -1482,7 +1481,7 @@ intq_consumer_thr(env_t const env)
     intq_context_t * const c = env ;
     pt_resume(c) ;
     for (c->i = 1; c->i <= 100; c->i++) {
-        pt_call(c, intq_receive, &c->queue_env, c->q, &c->got) ;
+        pt_queue_receive(c, c->q, &c->got) ;
         c->waited += pt_call_waited(c) ;
         check(c->got == c->i) ;
     }
@@ -1633,9 +1632,9 @@ PT_QUEUE_DEFINE(msgq, msg_t)
 typedef struct {
     pt_thread_t pt_thread ;
     pt_func_t pt_func ;
-    pt_queue_env_t queue_env ;
     msgq_t * q ;
     unsigned int i ;
+    unsigned int seen ;
     msg_t got ;
 } msgq_context_t ;
 
@@ -1661,13 +1660,14 @@ msgq_selective_thr(env_t const env)
     msgq_context_t * const c = env ;
     pt_resume(c) ;
     for (;;) {
+        c->seen = msgq_sent(c->q) ;
         for (c->i = 0; c->i < msgq_count(c->q); c->i++) {
             if (msgq_at(c->q, c->i)->kind == MSG_REPLY) {
                 check(msgq_remove(pt_get_pt(c), c->q, c->i, &c->got)) ;
                 return PT_DONE ;
             }
         }
-        pt_call(c, msgq_wait_send, &c->queue_env, c->q) ;
+        pt_queue_wait_send(c, c->q, c->seen) ;
     }
 }
 
@@ -1705,7 +1705,6 @@ PT_QUEUE_DEFINE(requestq, request_t)
 typedef struct {
     pt_thread_t pt_thread ;
     pt_func_t pt_func ;
-    pt_queue_env_t queue_env ;
     requestq_t * requests ;
     request_t req ;
     int answer ;
@@ -1720,9 +1719,9 @@ rr_server_thr(env_t const env)
     rr_context_t * const c = env ;
     pt_resume(c) ;
     for (;;) {
-        pt_call(c, requestq_receive, &c->queue_env, c->requests, &c->req) ;
+        pt_queue_receive(c, c->requests, &c->req) ;
         c->answer = c->req.x * c->req.x ;
-        pt_call(c, intq_send, &c->queue_env, c->req.reply, &c->answer) ;
+        pt_queue_send(c, c->req.reply, &c->answer) ;
     }
 }
 
@@ -1733,8 +1732,8 @@ rr_client_thr(env_t const env)
     pt_resume(c) ;
     c->req.x = c->x ;
     c->req.reply = &c->replies ;
-    pt_call(c, requestq_send, &c->queue_env, c->requests, &c->req) ;
-    pt_call(c, intq_receive, &c->queue_env, &c->replies, &c->answer) ;
+    pt_queue_send(c, c->requests, &c->req) ;
+    pt_queue_receive(c, &c->replies, &c->answer) ;
     return PT_DONE ;
 }
 
@@ -1786,7 +1785,6 @@ typedef struct {
     pt_thread_t pt_thread ;
     pt_func_t pt_func ;
     pt_timer_env_t timer_env ;
-    pt_queue_env_t queue_env ;
     pt_timers_t * timers ;
     tmsgq_t * q ;
     tmsg_t msg ;
@@ -1798,14 +1796,13 @@ after_thr(env_t const env)
     after_context_t * const c = env ;
     pt_resume(c) ;
     pt_sleep(c, &c->timer_env, c->timers, 10) ;
-    pt_call(c, tmsgq_send, &c->queue_env, c->q, &c->msg) ;
+    pt_queue_send(c, c->q, &c->msg) ;
     return PT_DONE ;
 }
 
 typedef struct {
     pt_thread_t pt_thread ;
     pt_func_t pt_func ;
-    pt_queue_env_t queue_env ;
     after_context_t after ;
     pt_timers_t * timers ;
     tmsgq_t * q ;
@@ -1832,7 +1829,7 @@ timeout_waiter_thr(env_t const env)
 
         /* take the first reply or current timeout, skipping stale ones */
         for (;;) {
-            pt_call(c, tmsgq_receive, &c->queue_env, c->q, &c->msg) ;
+            pt_queue_receive(c, c->q, &c->msg) ;
             if (c->msg.kind != TO_TIMEOUT || c->msg.gen == c->gen) {
                 break ;
             }
@@ -1961,8 +1958,9 @@ typedef struct {
     pt_thread_t pt_thread ;
     pt_func_t pt_func ;
     pt_timer_env_t timer_env ;
-    pt_queue_env_t queue_env ;
     int value ;
+    unsigned int seen ;
+    unsigned int i ;
     int done ;
 } irq_context_t ;
 
@@ -2042,9 +2040,28 @@ irq_receiver_thr(env_t const env)
 {
     irq_context_t * const c = env ;
     pt_resume(c) ;
-    pt_call(c, intq_receive, &c->queue_env, &irq_q, &c->value) ;
+    pt_queue_receive(c, &irq_q, &c->value) ;
     c->done = 1 ;
     return PT_DONE ;
+}
+
+/* waits for a 7, leaving anything else in the queue */
+static pt_t
+irq_select_thr(env_t const env)
+{
+    irq_context_t * const c = env ;
+    pt_resume(c) ;
+    for (;;) {
+        c->seen = intq_sent(&irq_q) ;
+        for (c->i = 0; c->i < intq_count(&irq_q); c->i++) {
+            if (*intq_at(&irq_q, c->i) == 7) {
+                check(intq_remove(irq_pt, &irq_q, c->i, &c->value)) ;
+                c->done = 1 ;
+                return PT_DONE ;
+            }
+        }
+        pt_queue_wait_send(c, &irq_q, c->seen) ;
+    }
 }
 
 static void
@@ -2163,6 +2180,32 @@ test_interrupts(void)
             while (protothread_run(irq_pt)) ;
         }
         check(c.done && c.value == 7) ;
+        protothread_free(irq_pt) ;
+    }
+
+    /* a selective receiver passing over an unwanted item never misses the
+     * one it wants, whenever the interrupt sends it
+     */
+    for (k = 1; k <= 8; k++) {
+        irq_context_t c ;
+        int slots[4] ;
+        int const one = 1 ;
+
+        memset(&c, 0, sizeof(c)) ;
+        intq_init(&irq_q, slots, 4) ;
+        irq_pt = protothread_create() ;
+        check(intq_try_send(irq_pt, &irq_q, &one)) ;
+        pt_create(irq_pt, &c.pt_thread, irq_select_thr, &c) ;
+        pt_cs_irq = irq_queue_send ;
+        pt_cs_irq_at = k ;
+        while (protothread_run(irq_pt)) ;
+        if (pt_cs_irq) {
+            pt_cs_irq = NULL ;
+            irq_queue_send() ;
+            while (protothread_run(irq_pt)) ;
+        }
+        check(c.done && c.value == 7) ;
+        check(intq_count(&irq_q) == 1 && *intq_at(&irq_q, 0) == 1) ;
         protothread_free(irq_pt) ;
     }
 }

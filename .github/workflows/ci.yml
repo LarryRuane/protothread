@@ -161,7 +161,7 @@ jobs:
           typedef struct {
               pt_thread_t pt_thread ; pt_func_t pt_func ;
               pt_sem_env_t se ; pt_lock_env_t le ; pt_timer_env_t te ;
-              pt_queue_env_t qe ; unsigned v ;
+              unsigned v ;
           } ctx_t ;
           static unsigned qslots[4] ;
           static uq_t q ;
@@ -178,8 +178,8 @@ jobs:
               pt_lock_acquire_write(x, &x->le, &lock) ;
               pt_lock_release_write(&x->le, &lock) ;
               pt_sleep(x, &x->te, &timers, 10) ;
-              pt_call(x, uq_send, &x->qe, &q, &x->v) ;
-              pt_call(x, uq_receive, &x->qe, &q, &x->v) ;
+              pt_queue_send(x, &q, &x->v) ;
+              pt_queue_receive(x, &q, &x->v) ;
               return PT_DONE ;
           }
           void app_init(void) {
@@ -411,7 +411,6 @@ jobs:
           typedef struct {
               pt_thread_t pt_thread ; pt_func_t pt_func ;
               pt_sem_env_t se ; pt_lock_env_t le ; pt_timer_env_t te ;
-              pt_queue_env_t qe ;
               int i ;
               int v ;
           } ctx_t ;
@@ -440,9 +439,9 @@ jobs:
               pt_lock_release_write(&x->le, &lock) ;
               pt_sleep(x, &x->te, &timers, 10) ;
               x->v = 5 ;
-              pt_call(x, intq_send, &x->qe, &q, &x->v) ;
+              pt_queue_send(x, &q, &x->v) ;
               x->v = 0 ;
-              pt_call(x, intq_receive, &x->qe, &q, &x->v) ;
+              pt_queue_receive(x, &q, &x->v) ;
               return PT_DONE ;
           }
 

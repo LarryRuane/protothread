@@ -278,7 +278,6 @@ The mailbox above is a queue of one, written by hand. With a [message queue](#me
  typedef struct {
      pt_thread_t pt_thread;
      pt_func_t pt_func;
-     pt_queue_env_t queue_env;
      intq_t * q;
      int i;
      int value;
@@ -291,7 +290,7 @@ The mailbox above is a queue of one, written by hand. With a [message queue](#me
      pt_resume(c);
 
      for (c->i = 1; c->i <= 100; c->i++) {
-         pt_call(c, intq_send, &c->queue_env, c->q, &c->i);
+         pt_queue_send(c, c->q, &c->i);
      }
      return PT_DONE;
  }
@@ -303,7 +302,7 @@ The mailbox above is a queue of one, written by hand. With a [message queue](#me
      pt_resume(c);
 
      for (c->i = 1; c->i <= 100; c->i++) {
-         pt_call(c, intq_receive, &c->queue_env, c->q, &c->value);
+         pt_queue_receive(c, c->q, &c->value);
          assert(c->value == c->i);
      }
      return PT_DONE;
@@ -1032,37 +1031,41 @@ Releasing never blocks, so if acquiring didn't either, nothing else ran in betwe
 
 ```c
 typedef struct { int kind; int value; } msg_t;
-PT_QUEUE_DEFINE(msgq, msg_t)            /* msgq_t, msgq_send() and the rest */
+PT_QUEUE_DEFINE(msgq, msg_t)            /* msgq_t, msgq_try_send() and the rest */
 
 msg_t slots[8];
 msgq_t q;
 msgq_init(&q, slots, 8);
 ```
 
-Sending and receiving can block, so like any blocking function they are protothread functions, called through `pt_call()`, with a `pt_queue_env_t` in your context structure. Items go in and come out through pointers, so each is copied once each way:
+Sending and receiving block like `pt_wait()` does, in your own protothread, so they are macros, and they work on any queue. Items go in and come out through pointers, so each is copied once each way:
 
 ```c
-pt_call(c, msgq_send, &c->queue_env, &q, &c->msg);      /* blocks while full */
-pt_call(c, msgq_receive, &c->queue_env, &q, &c->msg);   /* blocks while empty */
+pt_queue_send(c, &q, &c->msg);          /* blocks while full */
+pt_queue_receive(c, &q, &c->msg);       /* blocks while empty */
 ```
 
-> `name_send(pt_queue_env_t *queue_env, name_t *q, type const *item)`
+> `void pt_queue_send(struct context_t *c, name_t *q, type const *item)`
 >
-> Block while the queue is full, then append a copy of `*item`. Call through `pt_call()`.
+> Block while the queue is full, then append a copy of `*item`.
 
-> `name_receive(pt_queue_env_t *queue_env, name_t *q, type *item)`
+> `void pt_queue_receive(struct context_t *c, name_t *q, type *item)`
 >
-> Block while the queue is empty, then remove the oldest item into `*item`. Call through `pt_call()`.
+> Block while the queue is empty, then remove the oldest item into `*item`.
 
-> `name_wait_send(pt_queue_env_t *queue_env, name_t *q)`
+> `void pt_queue_wait_send(struct context_t *c, name_t *q, unsigned int seen)`
 >
-> Block until another item is sent, without taking anything. Call through `pt_call()`.
+> `unsigned int name_sent(name_t const *q)`
+>
+> Block, without taking anything, until something has been sent since `name_sent()` returned `seen`. See the example below.
+
+Like the other blocking macros, these evaluate `q` and `item` more than once, so neither may have side effects. They aren't `pt_call()`s, so `pt_call_waited()` doesn't apply to them; with queues it is seldom needed, since what a protothread needs to know arrives in the message rather than in memory that others may have changed.
 
 > `bool_t name_try_send(protothread_t, name_t *q, type const *item)`
 >
 > `bool_t name_try_receive(protothread_t, name_t *q, type *item)`
 >
-> The same as send and receive, but return FALSE instead of blocking. `try_send()` is safe to call from an interrupt handler once the `PT_CRITICAL_*` macros are defined, and a protothread blocked in `receive()` or `wait_send()` cannot miss what it sends.
+> The same as send and receive, but return FALSE instead of blocking. `try_send()` is safe to call from an interrupt handler once the `PT_CRITICAL_*` macros are defined, and a protothread blocked in `pt_queue_receive()` or `pt_queue_wait_send()` cannot miss what it sends.
 
 > `unsigned int name_count(name_t const *q)`
 >
@@ -1093,7 +1096,7 @@ after_thr(void * const env)
     after_context_t * const c = env;
     pt_resume(c);
     pt_sleep(c, &c->timer_env, c->timers, 10);
-    pt_call(c, msgq_send, &c->queue_env, c->q, &c->msg);
+    pt_queue_send(c, c->q, &c->msg);
     return PT_DONE;
 }
 ```
@@ -1106,7 +1109,7 @@ c->after.msg.kind = TIMEOUT;
 c->after.msg.gen = c->gen;
 pt_create(pt_get_pt(c), &c->after.pt_thread, after_thr, &c->after);
 do {
-    pt_call(c, msgq_receive, &c->queue_env, &q, &c->msg);
+    pt_queue_receive(c, &q, &c->msg);
 } while (c->msg.kind == TIMEOUT && c->msg.gen != c->gen);
 if (c->msg.kind != TIMEOUT) {
     pt_timer_cancel(&timers, &c->after.timer_env);
@@ -1114,17 +1117,18 @@ if (c->msg.kind != TIMEOUT) {
 }
 ```
 
-When a receiver wants one kind of message while others wait their turn, it can look before it takes. `wait_send()` blocks only until something new arrives, so messages it has already passed over don't wake it again:
+When a receiver wants one kind of message while others wait their turn, it can look before it takes. `pt_queue_wait_send()` blocks only until something new arrives, so messages it has already passed over don't wake it again. Note where `seen` is read: *before* looking, so that a message sent while the receiver looks, even by an interrupt, ends the wait at once instead of being slept through:
 
 ```c
 for (;;) {
+    c->seen = msgq_sent(&q);
     for (c->i = 0; c->i < msgq_count(&q); c->i++) {
         if (msgq_at(&q, c->i)->kind == REPLY) {
             msgq_remove(pt_get_pt(c), &q, c->i, &c->msg);
             goto got_reply;
         }
     }
-    pt_call(c, msgq_wait_send, &c->queue_env, &q);
+    pt_queue_wait_send(c, &q, c->seen);
 }
 ```
 
@@ -1140,15 +1144,15 @@ typedef struct {
 PT_QUEUE_DEFINE(requestq, request_t)
 
 /* server */
-pt_call(c, requestq_receive, &c->queue_env, &requests, &c->req);
+pt_queue_receive(c, &requests, &c->req);
 c->answer = c->req.x * c->req.x;
-pt_call(c, intq_send, &c->queue_env, c->req.reply, &c->answer);
+pt_queue_send(c, c->req.reply, &c->answer);
 
 /* client, with its own reply queue in its context */
 c->req.x = 7;
 c->req.reply = &c->replies;
-pt_call(c, requestq_send, &c->queue_env, &requests, &c->req);
-pt_call(c, intq_receive, &c->queue_env, &c->replies, &c->answer);
+pt_queue_send(c, &requests, &c->req);
+pt_queue_receive(c, &c->replies, &c->answer);
 ```
 
 Send the pointer, never the queue itself: a copy of a queue would be a second queue sharing the first one's storage. The reply queue also has to outlive the request, which it does here because the client waits for its answer.
