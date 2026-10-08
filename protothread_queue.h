@@ -82,12 +82,20 @@ pt_i_queue_appended(pt_i_queue_t * const q)
     q->sent++ ;
 }
 
-/* the caller has just copied out the oldest item */
+/* the caller has just closed a gap by moving the older items up by one */
 static inline void
 pt_i_queue_took_oldest(pt_i_queue_t * const q)
 {
     PT_CRITICAL_ASSERT() ;
     q->head = pt_i_queue_slot(q, 1) ;
+    q->count-- ;
+}
+
+/* the caller has just closed a gap by moving the newer items down by one */
+static inline void
+pt_i_queue_took_newest(pt_i_queue_t * const q)
+{
+    PT_CRITICAL_ASSERT() ;
     q->count-- ;
 }
 
@@ -157,12 +165,20 @@ name ## _remove(protothread_t const s, name ## _t * const q, \
         if (item) { \
             *item = q->slots[pt_i_queue_slot(&q->q, i)] ; \
         } \
-        /* close the gap by moving the older items up by one */ \
-        for (k = i; k > 0; k--) { \
-            q->slots[pt_i_queue_slot(&q->q, k)] = \
-                q->slots[pt_i_queue_slot(&q->q, k - 1)] ; \
+        /* close the gap from whichever side has fewer items to move */ \
+        if (i < q->q.count - 1 - i) { \
+            for (k = i; k > 0; k--) { \
+                q->slots[pt_i_queue_slot(&q->q, k)] = \
+                    q->slots[pt_i_queue_slot(&q->q, k - 1)] ; \
+            } \
+            pt_i_queue_took_oldest(&q->q) ; \
+        } else { \
+            for (k = i + 1; k < q->q.count; k++) { \
+                q->slots[pt_i_queue_slot(&q->q, k - 1)] = \
+                    q->slots[pt_i_queue_slot(&q->q, k)] ; \
+            } \
+            pt_i_queue_took_newest(&q->q) ; \
         } \
-        pt_i_queue_took_oldest(&q->q) ; \
         taken = true ; \
     } \
     PT_CRITICAL_EXIT(saved) ; \

@@ -1070,7 +1070,7 @@ pt_call(c, msgq_receive, &c->queue_env, &q, &c->msg);   /* blocks while empty */
 >
 > `bool_t name_remove(protothread_t, name_t *q, unsigned int i, type *item)`
 >
-> Look inside the queue without blocking: the number of items, a pointer to the `i`-th oldest (0 is the next to be received), and removal of the `i`-th oldest, which keeps the rest in order. `item` may be NULL to discard. A pointer from `at()` stays valid until something is removed.
+> Look inside the queue without blocking: the number of items, a pointer to the `i`-th oldest (0 is the next to be received), and removal of the `i`-th oldest, which keeps the rest in order. Removal moves whichever side of the gap is shorter, so taking the oldest or the newest moves nothing. `item` may be NULL to discard. A pointer from `at()` stays valid until something is removed.
 
 Like the semaphore, a queue isn't strictly fair: a protothread that finds it non-empty takes an item even if another was woken for it first, for the same reason, to avoid convoys. Every wakeup is a broadcast, and senders and receivers wait on different channels, so sending wakes only receivers and receiving wakes only senders. Items are copied by assignment, and for an item larger than a few words the compiler may emit a call to `memcpy` (clang targeting Cortex-M does so from 16 bytes at `-Os`). Every embedded toolchain provides it, but if you are avoiding it, queue pointers instead.
 

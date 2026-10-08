@@ -1553,6 +1553,72 @@ test_queue_nonblocking(void)
     protothread_free(pt) ;
 }
 
+/* Removal closes the gap from whichever side is shorter. Comparing the
+ * addresses at() returns shows which items moved: an item that didn't move
+ * stays in the same slot.
+ */
+static void
+test_queue_remove(void)
+{
+    protothread_t const pt = protothread_create() ;
+    int slots[5] ;
+    intq_t q ;
+    int const * oldest ;
+    int x ;
+    int i ;
+
+    /* fill, then take two and add two, so that the items wrap the ring */
+    intq_init(&q, slots, 5) ;
+    for (i = 1; i <= 5; i++) {
+        check(intq_try_send(pt, &q, &i)) ;
+    }
+    check(intq_try_receive(pt, &q, &x) && x == 1) ;
+    check(intq_try_receive(pt, &q, &x) && x == 2) ;
+    for (i = 6; i <= 7; i++) {
+        check(intq_try_send(pt, &q, &i)) ;
+    }
+
+    /* 3 4 5 6 7: removing the newest moves nothing */
+    oldest = intq_at(&q, 0) ;
+    check(intq_remove(pt, &q, 4, &x) && x == 7) ;
+    check(intq_at(&q, 0) == oldest) ;
+
+    /* 3 4 5 6: the gap at 5 is nearer the new end, so only 6 moves */
+    check(intq_remove(pt, &q, 2, &x) && x == 5) ;
+    check(intq_at(&q, 0) == oldest && *intq_at(&q, 2) == 6) ;
+
+    /* 3 4 6: removing the oldest moves nothing either */
+    {
+        int const * const second = intq_at(&q, 1) ;
+        check(intq_remove(pt, &q, 0, &x) && x == 3) ;
+        check(intq_at(&q, 0) == second) ;
+    }
+
+    /* 4 6 8 9 10: the gap at 6 is nearer the old end, so only 4 moves */
+    for (i = 8; i <= 10; i++) {
+        check(intq_try_send(pt, &q, &i)) ;
+    }
+    {
+        int const * const third = intq_at(&q, 2) ;
+        check(intq_remove(pt, &q, 1, &x) && x == 6) ;
+        check(intq_at(&q, 1) == third) ;
+    }
+
+    /* 4 8 9 10, in order */
+    check(intq_count(&q) == 4) ;
+    check(*intq_at(&q, 0) == 4 && *intq_at(&q, 1) == 8) ;
+    check(*intq_at(&q, 2) == 9 && *intq_at(&q, 3) == 10) ;
+
+    /* empty it from the new end, then reuse it */
+    while (intq_count(&q) > 0) {
+        check(intq_remove(pt, &q, intq_count(&q) - 1, NULL)) ;
+    }
+    i = 11 ;
+    check(intq_try_send(pt, &q, &i)) ;
+    check(intq_try_receive(pt, &q, &x) && x == 11) ;
+    protothread_free(pt) ;
+}
+
 /* Selective receive, standing in for Go's select: several kinds of message
  * share one queue, and the receiver takes the one it wants, leaving the
  * others in order.
@@ -2129,6 +2195,7 @@ main()
     test_lock_cancel() ;
     test_queue_fifo() ;
     test_queue_nonblocking() ;
+    test_queue_remove() ;
     test_queue_select() ;
     test_queue_void() ;
     test_queue_of_queues() ;
