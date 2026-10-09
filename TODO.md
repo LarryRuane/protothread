@@ -188,6 +188,17 @@ debugging into a one-line call, and costs nothing in a production build.
     that the releaser is the owner.
   * **`set(CMAKE_C_COMPILER "gcc")`** in CMakeLists hard-forces gcc on every
     platform, though clang works fine. Make it conditional or drop it.
+  * **An intrusive heap for timers.** `pt_i_timer_insert()` walks the sorted
+    list with interrupts masked, and since a new sleep usually has the latest
+    deadline, a typical insert walks the whole list: O(N) masked time with N
+    sleepers, and `pt_timer_cancel()` is the same. A binary heap bounds both at
+    O(log N). It needn't be array-based, which would mean a caller-supplied
+    array and a hard limit on sleepers. Put left, right and parent pointers in
+    `pt_timer_env_t` in place of `next`, keep a root and a count in
+    `pt_timers_t`, and the bits of the count give the path to the next free
+    position. No API change. Costs two more pointers per sleeper and maybe
+    60-80 lines, and equal deadlines lose FIFO wake order unless a sequence
+    number breaks ties. Worth it only if someone actually has many sleepers.
   * **Killing a sleeping protothread** leaves a dangling entry on the timer list
     unless `pt_timer_cancel()` is called first; same hazard the reader-writer
     lock has. Documented; a generated typed kill (see type-safe top-level
