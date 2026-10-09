@@ -25,6 +25,7 @@
 #include "protothread_sem.h"
 #include "protothread_lock.h"
 #include "protothread_timer.h"
+#include "protothread_queue.h"
 
 /******************************************************************************/
 
@@ -1451,6 +1452,483 @@ test_lock_cancel(void)
 
 /******************************************************************************/
 
+PT_QUEUE_DEFINE(intq, int)
+
+typedef struct {
+    pt_thread_t pt_thread ;
+    pt_func_t pt_func ;
+    intq_t * q ;
+    int i ;
+    int got ;
+    int waited ;        /* times a send or receive blocked */
+} intq_context_t ;
+
+static pt_t
+intq_producer_thr(env_t const env)
+{
+    intq_context_t * const c = env ;
+    pt_resume(c) ;
+    for (c->i = 1; c->i <= 100; c->i++) {
+        pt_queue_send(c, c->q, &c->i) ;
+        c->waited += pt_call_waited(c) ;
+    }
+    return PT_DONE ;
+}
+
+static pt_t
+intq_consumer_thr(env_t const env)
+{
+    intq_context_t * const c = env ;
+    pt_resume(c) ;
+    for (c->i = 1; c->i <= 100; c->i++) {
+        pt_queue_receive(c, c->q, &c->got) ;
+        c->waited += pt_call_waited(c) ;
+        check(c->got == c->i) ;
+    }
+    return PT_DONE ;
+}
+
+/* the producer/consumer example, through a queue of four */
+static void
+test_queue_fifo(void)
+{
+    protothread_t const pt = protothread_create() ;
+    int slots[4] ;
+    intq_t q ;
+    intq_context_t p, c ;
+
+    intq_init(&q, slots, 4) ;
+    memset(&p, 0, sizeof(p)) ;
+    memset(&c, 0, sizeof(c)) ;
+    p.q = c.q = &q ;
+    pt_create(pt, &c.pt_thread, intq_consumer_thr, &c) ;
+    pt_create(pt, &p.pt_thread, intq_producer_thr, &p) ;
+    while (protothread_run(pt)) ;
+    check(p.i == 101 && c.i == 101) ;
+    check(intq_count(&q) == 0) ;
+    /* both sides had to wait for the other at some point */
+    check(p.waited > 0 && c.waited > 0) ;
+    protothread_free(pt) ;
+}
+
+/* the non-blocking calls, including across the wrap of the ring */
+static void
+test_queue_nonblocking(void)
+{
+    protothread_t const pt = protothread_create() ;
+    int slots[4] ;
+    intq_t q ;
+    int x ;
+    int i ;
+
+    intq_init(&q, slots, 4) ;
+    check(!intq_try_receive(pt, &q, &x)) ;
+    for (i = 1; i <= 4; i++) {
+        check(intq_try_send(pt, &q, &i)) ;
+    }
+    check(!intq_try_send(pt, &q, &i)) ;
+    check(intq_count(&q) == 4) ;
+
+    /* take two, add two: the ring now wraps */
+    check(intq_try_receive(pt, &q, &x) && x == 1) ;
+    check(intq_try_receive(pt, &q, &x) && x == 2) ;
+    i = 5 ;
+    check(intq_try_send(pt, &q, &i)) ;
+    i = 6 ;
+    check(intq_try_send(pt, &q, &i)) ;
+    for (i = 0; i < 4; i++) {
+        check(*intq_at(&q, (unsigned int)i) == 3 + i) ;
+    }
+
+    /* remove from the middle, then from the end, keeping order */
+    check(intq_remove(pt, &q, 2, &x) && x == 5) ;
+    check(intq_remove(pt, &q, 2, NULL)) ;
+    check(!intq_remove(pt, &q, 2, &x)) ;
+    check(intq_count(&q) == 2) ;
+    check(*intq_at(&q, 0) == 3 && *intq_at(&q, 1) == 4) ;
+    check(intq_try_receive(pt, &q, &x) && x == 3) ;
+    check(intq_try_receive(pt, &q, &x) && x == 4) ;
+    check(intq_count(&q) == 0) ;
+    protothread_free(pt) ;
+}
+
+/* Removal closes the gap from whichever side is shorter. Comparing the
+ * addresses at() returns shows which items moved: an item that didn't move
+ * stays in the same slot.
+ */
+static void
+test_queue_remove(void)
+{
+    protothread_t const pt = protothread_create() ;
+    int slots[5] ;
+    intq_t q ;
+    int const * oldest ;
+    int x ;
+    int i ;
+
+    /* fill, then take two and add two, so that the items wrap the ring */
+    intq_init(&q, slots, 5) ;
+    for (i = 1; i <= 5; i++) {
+        check(intq_try_send(pt, &q, &i)) ;
+    }
+    check(intq_try_receive(pt, &q, &x) && x == 1) ;
+    check(intq_try_receive(pt, &q, &x) && x == 2) ;
+    for (i = 6; i <= 7; i++) {
+        check(intq_try_send(pt, &q, &i)) ;
+    }
+
+    /* 3 4 5 6 7: removing the newest moves nothing */
+    oldest = intq_at(&q, 0) ;
+    check(intq_remove(pt, &q, 4, &x) && x == 7) ;
+    check(intq_at(&q, 0) == oldest) ;
+
+    /* 3 4 5 6: the gap at 5 is nearer the new end, so only 6 moves */
+    check(intq_remove(pt, &q, 2, &x) && x == 5) ;
+    check(intq_at(&q, 0) == oldest && *intq_at(&q, 2) == 6) ;
+
+    /* 3 4 6: removing the oldest moves nothing either */
+    {
+        int const * const second = intq_at(&q, 1) ;
+        check(intq_remove(pt, &q, 0, &x) && x == 3) ;
+        check(intq_at(&q, 0) == second) ;
+    }
+
+    /* 4 6 8 9 10: the gap at 6 is nearer the old end, so only 4 moves */
+    for (i = 8; i <= 10; i++) {
+        check(intq_try_send(pt, &q, &i)) ;
+    }
+    {
+        int const * const third = intq_at(&q, 2) ;
+        check(intq_remove(pt, &q, 1, &x) && x == 6) ;
+        check(intq_at(&q, 1) == third) ;
+    }
+
+    /* 4 8 9 10, in order */
+    check(intq_count(&q) == 4) ;
+    check(*intq_at(&q, 0) == 4 && *intq_at(&q, 1) == 8) ;
+    check(*intq_at(&q, 2) == 9 && *intq_at(&q, 3) == 10) ;
+
+    /* empty it from the new end, then reuse it */
+    while (intq_count(&q) > 0) {
+        check(intq_remove(pt, &q, intq_count(&q) - 1, NULL)) ;
+    }
+    i = 11 ;
+    check(intq_try_send(pt, &q, &i)) ;
+    check(intq_try_receive(pt, &q, &x) && x == 11) ;
+    protothread_free(pt) ;
+}
+
+/* Selective receive, standing in for Go's select: several kinds of message
+ * share one queue, and the receiver takes the one it wants, leaving the
+ * others in order.
+ */
+enum { MSG_STATUS, MSG_REPLY } ;
+typedef struct {
+    int kind ;
+    int value ;
+} msg_t ;
+PT_QUEUE_DEFINE(msgq, msg_t)
+
+typedef struct {
+    pt_thread_t pt_thread ;
+    pt_func_t pt_func ;
+    msgq_t * q ;
+    unsigned int i ;
+    unsigned int seen ;
+    msg_t got ;
+} msgq_context_t ;
+
+static pt_t
+msgq_sender_thr(env_t const env)
+{
+    msgq_context_t * const c = env ;
+    msg_t m ;
+    pt_resume(c) ;
+    m.kind = MSG_STATUS ; m.value = 1 ;
+    check(msgq_try_send(pt_get_pt(c), c->q, &m)) ;
+    m.value = 2 ;
+    check(msgq_try_send(pt_get_pt(c), c->q, &m)) ;
+    pt_yield(c) ;
+    m.kind = MSG_REPLY ; m.value = 42 ;
+    check(msgq_try_send(pt_get_pt(c), c->q, &m)) ;
+    return PT_DONE ;
+}
+
+static pt_t
+msgq_selective_thr(env_t const env)
+{
+    msgq_context_t * const c = env ;
+    pt_resume(c) ;
+    for (;;) {
+        c->seen = msgq_sent(c->q) ;
+        for (c->i = 0; c->i < msgq_count(c->q); c->i++) {
+            if (msgq_at(c->q, c->i)->kind == MSG_REPLY) {
+                check(msgq_remove(pt_get_pt(c), c->q, c->i, &c->got)) ;
+                return PT_DONE ;
+            }
+        }
+        pt_queue_wait_send(c, c->q, c->seen) ;
+    }
+}
+
+static void
+test_queue_select(void)
+{
+    protothread_t const pt = protothread_create() ;
+    msg_t slots[4] ;
+    msgq_t q ;
+    msgq_context_t r, w ;
+
+    msgq_init(&q, slots, 4) ;
+    memset(&r, 0, sizeof(r)) ;
+    memset(&w, 0, sizeof(w)) ;
+    r.q = w.q = &q ;
+    pt_create(pt, &r.pt_thread, msgq_selective_thr, &r) ;
+    pt_create(pt, &w.pt_thread, msgq_sender_thr, &w) ;
+    while (protothread_run(pt)) ;
+    check(r.got.kind == MSG_REPLY && r.got.value == 42) ;
+    /* the status messages are still there, in order */
+    check(msgq_count(&q) == 2) ;
+    check(msgq_at(&q, 0)->value == 1 && msgq_at(&q, 1)->value == 2) ;
+    protothread_free(pt) ;
+}
+
+/* A queue of requests, each carrying the queue its reply goes to: Go's
+ * channel of channels, with a pointer standing in for Go's reference.
+ */
+typedef struct {
+    int x ;
+    intq_t * reply ;
+} request_t ;
+PT_QUEUE_DEFINE(requestq, request_t)
+
+typedef struct {
+    pt_thread_t pt_thread ;
+    pt_func_t pt_func ;
+    requestq_t * requests ;
+    request_t req ;
+    int answer ;
+    int slots[1] ;
+    intq_t replies ;            /* each client's own */
+    int x ;
+} rr_context_t ;
+
+static pt_t
+rr_server_thr(env_t const env)
+{
+    rr_context_t * const c = env ;
+    pt_resume(c) ;
+    for (;;) {
+        pt_queue_receive(c, c->requests, &c->req) ;
+        c->answer = c->req.x * c->req.x ;
+        pt_queue_send(c, c->req.reply, &c->answer) ;
+    }
+}
+
+static pt_t
+rr_client_thr(env_t const env)
+{
+    rr_context_t * const c = env ;
+    pt_resume(c) ;
+    c->req.x = c->x ;
+    c->req.reply = &c->replies ;
+    pt_queue_send(c, c->requests, &c->req) ;
+    pt_queue_receive(c, &c->replies, &c->answer) ;
+    return PT_DONE ;
+}
+
+static void
+test_queue_of_queues(void)
+{
+    protothread_t const pt = protothread_create() ;
+    request_t slots[2] ;
+    requestq_t requests ;
+    rr_context_t server, client[3] ;
+    int i ;
+
+    requestq_init(&requests, slots, 2) ;
+    memset(&server, 0, sizeof(server)) ;
+    server.requests = &requests ;
+    pt_create(pt, &server.pt_thread, rr_server_thr, &server) ;
+    for (i = 0; i < 3; i++) {
+        memset(&client[i], 0, sizeof(client[i])) ;
+        client[i].requests = &requests ;
+        client[i].x = i + 2 ;
+        intq_init(&client[i].replies, client[i].slots, 1) ;
+        pt_create(pt, &client[i].pt_thread, rr_client_thr, &client[i]) ;
+    }
+    while (protothread_run(pt)) ;
+    /* each client got the answer to its own question */
+    for (i = 0; i < 3; i++) {
+        check(client[i].answer == (i + 2) * (i + 2)) ;
+        check(!pt_is_alive(&client[i].pt_thread)) ;
+    }
+    /* the server is still waiting for the next request */
+    check(pt_kill(&server.pt_thread)) ;
+    protothread_free(pt) ;
+}
+
+/* A receive with a timeout, Go's time.After(): a helper protothread sleeps,
+ * then sends TIMEOUT into the same queue the reply will arrive on. Whichever
+ * comes first wins. If the reply does, the helper is stopped; but it may
+ * already have sent, so each wait has a generation and a TIMEOUT from an
+ * earlier one is discarded.
+ */
+enum { TO_REPLY, TO_TIMEOUT } ;
+typedef struct {
+    int kind ;
+    unsigned int gen ;
+} tmsg_t ;
+PT_QUEUE_DEFINE(tmsgq, tmsg_t)
+
+typedef struct {
+    pt_thread_t pt_thread ;
+    pt_func_t pt_func ;
+    pt_timer_env_t timer_env ;
+    pt_timers_t * timers ;
+    tmsgq_t * q ;
+    tmsg_t msg ;
+} after_context_t ;
+
+static pt_t
+after_thr(env_t const env)
+{
+    after_context_t * const c = env ;
+    pt_resume(c) ;
+    pt_sleep(c, &c->timer_env, c->timers, 10) ;
+    pt_queue_send(c, c->q, &c->msg) ;
+    return PT_DONE ;
+}
+
+typedef struct {
+    pt_thread_t pt_thread ;
+    pt_func_t pt_func ;
+    after_context_t after ;
+    pt_timers_t * timers ;
+    tmsgq_t * q ;
+    tmsg_t msg ;
+    unsigned int gen ;
+    int round ;
+    int result[2] ;
+    int stale ;
+} timeout_context_t ;
+
+static pt_t
+timeout_waiter_thr(env_t const env)
+{
+    timeout_context_t * const c = env ;
+    pt_resume(c) ;
+    for (c->round = 0; c->round < 2; c->round++) {
+        /* start the timer */
+        c->gen++ ;
+        c->after.timers = c->timers ;
+        c->after.q = c->q ;
+        c->after.msg.kind = TO_TIMEOUT ;
+        c->after.msg.gen = c->gen ;
+        pt_create(pt_get_pt(c), &c->after.pt_thread, after_thr, &c->after) ;
+
+        /* take the first reply or current timeout, skipping stale ones */
+        for (;;) {
+            pt_queue_receive(c, c->q, &c->msg) ;
+            if (c->msg.kind != TO_TIMEOUT || c->msg.gen == c->gen) {
+                break ;
+            }
+            c->stale++ ;
+        }
+
+        /* if the reply won, stop the timer, if it hasn't already fired */
+        if (c->msg.kind == TO_REPLY) {
+            (void)pt_timer_cancel(c->timers, &c->after.timer_env) ;
+            (void)pt_kill(&c->after.pt_thread) ;
+        }
+        c->result[c->round] = c->msg.kind ;
+    }
+    return PT_DONE ;
+}
+
+static void
+test_queue_timeout(void)
+{
+    protothread_t const pt = protothread_create() ;
+    pt_timers_t timers ;
+    tmsg_t slots[4] ;
+    tmsgq_t q ;
+    timeout_context_t w ;
+    tmsg_t reply ;
+
+    reply.kind = TO_REPLY ;
+    reply.gen = 0 ;
+
+    /* first the reply wins, then the timeout does */
+    pt_timers_init(&timers, 0) ;
+    tmsgq_init(&q, slots, 4) ;
+    memset(&w, 0, sizeof(w)) ;
+    w.timers = &timers ;
+    w.q = &q ;
+    pt_create(pt, &w.pt_thread, timeout_waiter_thr, &w) ;
+    while (protothread_run(pt)) ;
+    pt_timer_run(pt, &timers, 2) ;
+    check(tmsgq_try_send(pt, &q, &reply)) ;
+    while (protothread_run(pt)) ;
+    check(w.result[0] == TO_REPLY) ;
+    pt_timer_run(pt, &timers, 12) ;         /* the second wait's deadline */
+    while (protothread_run(pt)) ;
+    check(w.result[1] == TO_TIMEOUT) ;
+    check(!pt_is_alive(&w.pt_thread)) ;
+    /* the first timer was stopped, so nothing is left over */
+    pt_timer_run(pt, &timers, 100) ;
+    while (protothread_run(pt)) ;
+    check(tmsgq_count(&q) == 0) ;
+    check(w.stale == 0) ;
+
+    /* Now the timer fires just before the reply arrives, so its TIMEOUT is
+     * queued behind the reply. The reply still wins, and the next wait finds
+     * the leftover TIMEOUT and discards it.
+     */
+    pt_timers_init(&timers, 0) ;
+    tmsgq_init(&q, slots, 4) ;
+    memset(&w, 0, sizeof(w)) ;
+    w.timers = &timers ;
+    w.q = &q ;
+    pt_create(pt, &w.pt_thread, timeout_waiter_thr, &w) ;
+    while (protothread_run(pt)) ;
+    pt_timer_run(pt, &timers, 10) ;         /* the helper is ready first */
+    check(tmsgq_try_send(pt, &q, &reply)) ; /* then the waiter */
+    while (protothread_run(pt)) ;
+    check(w.result[0] == TO_REPLY) ;
+    check(w.stale == 1) ;
+    check(tmsgq_try_send(pt, &q, &reply)) ;
+    while (protothread_run(pt)) ;
+    check(w.result[1] == TO_REPLY) ;
+    check(!pt_is_alive(&w.pt_thread)) ;
+    pt_timer_run(pt, &timers, 100) ;
+    while (protothread_run(pt)) ;
+    check(tmsgq_count(&q) == 0) ;
+    protothread_free(pt) ;
+}
+
+/* the predefined queue of void * */
+static void
+test_queue_void(void)
+{
+    protothread_t const pt = protothread_create() ;
+    void * slots[2] ;
+    pt_queue_t q ;
+    int a, b ;
+    void * x ;
+
+    pt_queue_init(&q, slots, 2) ;
+    x = &a ;
+    check(pt_queue_try_send(pt, &q, &x)) ;
+    x = &b ;
+    check(pt_queue_try_send(pt, &q, &x)) ;
+    check(pt_queue_try_receive(pt, &q, &x) && x == &a) ;
+    check(pt_queue_try_receive(pt, &q, &x) && x == &b) ;
+    protothread_free(pt) ;
+}
+
+/******************************************************************************/
+
 /* Interrupt races. These need the critical-section harness from CI, which
  * counts nesting depth and can fire a fake interrupt handler at the moment
  * interrupts are about to be masked -- the only moment a real one can land.
@@ -1480,6 +1958,9 @@ typedef struct {
     pt_thread_t pt_thread ;
     pt_func_t pt_func ;
     pt_timer_env_t timer_env ;
+    int value ;
+    unsigned int seen ;
+    unsigned int i ;
     int done ;
 } irq_context_t ;
 
@@ -1550,6 +2031,44 @@ irq_signal(void)
 {
     irq_flag = 1 ;
     pt_signal(irq_pt, &irq_until_channel) ;
+}
+
+static intq_t irq_q ;
+
+static pt_t
+irq_receiver_thr(env_t const env)
+{
+    irq_context_t * const c = env ;
+    pt_resume(c) ;
+    pt_queue_receive(c, &irq_q, &c->value) ;
+    c->done = 1 ;
+    return PT_DONE ;
+}
+
+/* waits for a 7, leaving anything else in the queue */
+static pt_t
+irq_select_thr(env_t const env)
+{
+    irq_context_t * const c = env ;
+    pt_resume(c) ;
+    for (;;) {
+        c->seen = intq_sent(&irq_q) ;
+        for (c->i = 0; c->i < intq_count(&irq_q); c->i++) {
+            if (*intq_at(&irq_q, c->i) == 7) {
+                check(intq_remove(irq_pt, &irq_q, c->i, &c->value)) ;
+                c->done = 1 ;
+                return PT_DONE ;
+            }
+        }
+        pt_queue_wait_send(c, &irq_q, c->seen) ;
+    }
+}
+
+static void
+irq_queue_send(void)
+{
+    int const seven = 7 ;
+    check(intq_try_send(irq_pt, &irq_q, &seven)) ;
 }
 
 static void
@@ -1639,6 +2158,56 @@ test_interrupts(void)
         check(c.done) ;
         protothread_free(irq_pt) ;
     }
+
+    /* an interrupt that sends to a queue, at any point while a protothread
+     * is blocking to receive from it, is never lost
+     */
+    for (k = 1; k <= 8; k++) {
+        irq_context_t c ;
+        int slots[2] ;
+
+        memset(&c, 0, sizeof(c)) ;
+        intq_init(&irq_q, slots, 2) ;
+        irq_pt = protothread_create() ;
+        pt_create(irq_pt, &c.pt_thread, irq_receiver_thr, &c) ;
+        pt_cs_irq = irq_queue_send ;
+        pt_cs_irq_at = k ;
+        while (protothread_run(irq_pt)) ;
+        if (pt_cs_irq) {
+            /* the interrupt never fired; send from thread context instead */
+            pt_cs_irq = NULL ;
+            irq_queue_send() ;
+            while (protothread_run(irq_pt)) ;
+        }
+        check(c.done && c.value == 7) ;
+        protothread_free(irq_pt) ;
+    }
+
+    /* a selective receiver passing over an unwanted item never misses the
+     * one it wants, whenever the interrupt sends it
+     */
+    for (k = 1; k <= 8; k++) {
+        irq_context_t c ;
+        int slots[4] ;
+        int const one = 1 ;
+
+        memset(&c, 0, sizeof(c)) ;
+        intq_init(&irq_q, slots, 4) ;
+        irq_pt = protothread_create() ;
+        check(intq_try_send(irq_pt, &irq_q, &one)) ;
+        pt_create(irq_pt, &c.pt_thread, irq_select_thr, &c) ;
+        pt_cs_irq = irq_queue_send ;
+        pt_cs_irq_at = k ;
+        while (protothread_run(irq_pt)) ;
+        if (pt_cs_irq) {
+            pt_cs_irq = NULL ;
+            irq_queue_send() ;
+            while (protothread_run(irq_pt)) ;
+        }
+        check(c.done && c.value == 7) ;
+        check(intq_count(&irq_q) == 1 && *intq_at(&irq_q, 0) == 1) ;
+        protothread_free(irq_pt) ;
+    }
 }
 
 #endif /* PT_TEST_IRQ */
@@ -1667,6 +2236,13 @@ main()
     test_join() ;
     test_same_line() ;
     test_lock_cancel() ;
+    test_queue_fifo() ;
+    test_queue_nonblocking() ;
+    test_queue_remove() ;
+    test_queue_select() ;
+    test_queue_void() ;
+    test_queue_of_queues() ;
+    test_queue_timeout() ;
     test_version() ;
 #ifdef PT_TEST_IRQ
     test_interrupts() ;

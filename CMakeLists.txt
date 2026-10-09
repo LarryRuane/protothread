@@ -79,6 +79,7 @@ configure_file(
 
 install (TARGETS pttest DESTINATION bin)
 install (FILES protothread.h protothread_lock.h protothread_sem.h protothread_timer.h
+               protothread_queue.h
          DESTINATION include)
 
 # Install pkgconfig files to libdata on BSD, otherwise lib
