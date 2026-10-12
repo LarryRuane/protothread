@@ -54,7 +54,8 @@
  *                  PT_SIGNAL_WAKES_ALL, pt_assert
  * Version          PT_VERSION_{MAJOR,MINOR,PATCH,NUMBER,STRING},
  *                  PT_VERSION_AT_LEAST
- * Companions       protothread_sem.h, protothread_lock.h, protothread_timer.h
+ * Companions       protothread_sem.h, protothread_lock.h, protothread_timer.h,
+ *                  protothread_queue.h
  */
 
 /* Version, semantic versioning (https://semver.org). This is the single

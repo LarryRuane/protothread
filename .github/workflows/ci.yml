@@ -156,10 +156,15 @@ jobs:
           #include "protothread_sem.h"
           #include "protothread_lock.h"
           #include "protothread_timer.h"
+          #include "protothread_queue.h"
+          PT_QUEUE_DEFINE(uq, unsigned)
           typedef struct {
               pt_thread_t pt_thread ; pt_func_t pt_func ;
               pt_sem_env_t se ; pt_lock_env_t le ; pt_timer_env_t te ;
+              unsigned v ;
           } ctx_t ;
+          static unsigned qslots[4] ;
+          static uq_t q ;
           static struct protothread_s state ;
           static pt_timers_t timers ;
           static pt_lock_t lock ;
@@ -173,10 +178,13 @@ jobs:
               pt_lock_acquire_write(x, &x->le, &lock) ;
               pt_lock_release_write(&x->le, &lock) ;
               pt_sleep(x, &x->te, &timers, 10) ;
+              pt_queue_send(x, &q, &x->v) ;
+              pt_queue_receive(x, &q, &x->v) ;
               return PT_DONE ;
           }
           void app_init(void) {
               protothread_init(&state) ; pt_lock_init(&lock) ;
+              uq_init(&q, qslots, 4) ;
               pt_timers_init(&timers, 0) ;
               pt_create(&state, &c.pt_thread, thr, &c) ;
           }
@@ -198,7 +206,7 @@ jobs:
   # The headers are C, but a C++ project should be able to include them.
   # This is a narrow claim and easy to break with one implicit void*
   # conversion, so compile a real protothread -- yields, nesting through the
-  # semaphore, lock and timer helpers, and the computed goto -- as C++.
+  # semaphore, lock, timer and queue helpers, and the computed goto -- as C++.
   # Three internal functions require the caller to already be in a critical
   # section. PT_CRITICAL_* are no-ops by default, so a future call from thread
   # context would break that silently and nothing would complain. Define them
@@ -396,12 +404,19 @@ jobs:
           #include "protothread_sem.h"
           #include "protothread_lock.h"
           #include "protothread_timer.h"
+          #include "protothread_queue.h"
+
+          PT_QUEUE_DEFINE(intq, int)
 
           typedef struct {
               pt_thread_t pt_thread ; pt_func_t pt_func ;
               pt_sem_env_t se ; pt_lock_env_t le ; pt_timer_env_t te ;
               int i ;
+              int v ;
           } ctx_t ;
+
+          static int qslots[2] ;
+          static intq_t q ;
 
           static struct protothread_s state ;
           static pt_timers_t timers ;
@@ -423,6 +438,10 @@ jobs:
               pt_lock_acquire_write(x, &x->le, &lock) ;
               pt_lock_release_write(&x->le, &lock) ;
               pt_sleep(x, &x->te, &timers, 10) ;
+              x->v = 5 ;
+              pt_queue_send(x, &q, &x->v) ;
+              x->v = 0 ;
+              pt_queue_receive(x, &q, &x->v) ;
               return PT_DONE ;
           }
 
@@ -432,14 +451,15 @@ jobs:
               pt_time_t t ;
               protothread_init(&state) ;
               pt_lock_init(&lock) ;
+              intq_init(&q, qslots, 2) ;
               pt_timers_init(&timers, 0) ;
               pt_create(&state, &c.pt_thread, thr, &c) ;
               for (t = 0; t <= 20; t++) {
                   pt_timer_run(&state, &timers, t) ;
                   while (protothread_run(&state)) { }
               }
-              if (c.i != 3) {
-                  std::printf("FAIL: i = %d\n", c.i) ;
+              if (c.i != 3 || c.v != 5) {
+                  std::printf("FAIL: i = %d, v = %d\n", c.i, c.v) ;
                   return 1 ;
               }
               protothread_deinit(&state) ;
@@ -469,6 +489,7 @@ jobs:
           set -euo pipefail
           cmake --install build
           test -f inst/include/protothread_timer.h
+          test -f inst/include/protothread_queue.h
           export PKG_CONFIG_PATH="$PWD/inst/lib/pkgconfig"
           pkg-config --exists protothread
           echo "version: $(pkg-config --modversion protothread)"
