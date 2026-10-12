@@ -27,7 +27,7 @@
  * The blocking calls are macros, like pt_wait(), and work on any queue:
  *   pt_queue_send(c, q, item_p)         block while full, then append
  *   pt_queue_receive(c, q, item_p)      block while empty, then take oldest
- *   pt_queue_wait_send(c, q, seen)      block until name_sent(q) != seen
+ *   pt_queue_wait_new(c, q, seen)       block until name_sent(q) != seen
  *
  * pt_queue_t and pt_queue_*() are a predefined queue of void *.
  *
@@ -258,7 +258,7 @@ name ## _remove(protothread_t const s, name ## _t * const q, \
 /* Read seen from name_sent() before looking at the queue, so that anything
  * sent after that, even by an interrupt, ends the wait.
  */
-#define pt_queue_wait_send(c, queue, seen) \
+#define pt_queue_wait_new(c, queue, seen) \
     pt_wait_until(c, &(queue)->q.sent, (queue)->q.sent != (seen))
 
 PT_QUEUE_DEFINE(pt_queue, void *)

@@ -1053,7 +1053,7 @@ pt_queue_receive(c, &q, &c->msg);       /* blocks while empty */
 >
 > Block while the queue is empty, then remove the oldest item into `*item`.
 
-> `void pt_queue_wait_send(struct context_t *c, name_t *q, unsigned int seen)`
+> `void pt_queue_wait_new(struct context_t *c, name_t *q, unsigned int seen)`
 >
 > `unsigned int name_sent(name_t const *q)`
 >
@@ -1065,7 +1065,7 @@ Like the other blocking macros, these evaluate `q` and `item` more than once, so
 >
 > `bool_t name_try_receive(protothread_t, name_t *q, type *item)`
 >
-> The same as send and receive, but return FALSE instead of blocking. `try_send()` is safe to call from an interrupt handler once the `PT_CRITICAL_*` macros are defined, and a protothread blocked in `pt_queue_receive()` or `pt_queue_wait_send()` cannot miss what it sends.
+> The same as send and receive, but return FALSE instead of blocking. `try_send()` is safe to call from an interrupt handler once the `PT_CRITICAL_*` macros are defined, and a protothread blocked in `pt_queue_receive()` or `pt_queue_wait_new()` cannot miss what it sends.
 
 > `unsigned int name_count(name_t const *q)`
 >
@@ -1117,7 +1117,7 @@ if (c->msg.kind != TIMEOUT) {
 }
 ```
 
-When a receiver wants one kind of message while others wait their turn, it can look before it takes. `pt_queue_wait_send()` blocks only until something new arrives, so messages it has already passed over don't wake it again. Note where `seen` is read: *before* looking, so that a message sent while the receiver looks, even by an interrupt, ends the wait at once instead of being slept through:
+When a receiver wants one kind of message while others wait their turn, it can look before it takes. `pt_queue_wait_new()` blocks only until something new arrives, so messages it has already passed over don't wake it again. Note where `seen` is read: *before* looking, so that a message sent while the receiver looks, even by an interrupt, ends the wait at once instead of being slept through:
 
 ```c
 for (;;) {
@@ -1128,7 +1128,7 @@ for (;;) {
             goto got_reply;
         }
     }
-    pt_queue_wait_send(c, &q, c->seen);
+    pt_queue_wait_new(c, &q, c->seen);
 }
 ```
 

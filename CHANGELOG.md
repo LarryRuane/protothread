@@ -29,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is a predefined queue of `void *`. `pt_queue_send()` and `pt_queue_receive()`
   block when full and empty, in the caller's own context like `pt_wait()`;
   `try_send()` is safe to call from an interrupt handler; and `count()`,
-  `at()`, `remove()` and `pt_queue_wait_send()` let a receiver take one kind
+  `at()`, `remove()` and `pt_queue_wait_new()` let a receiver take one kind
   of message while others wait, which with a tagged union stands in for Go's
   `select`.
 

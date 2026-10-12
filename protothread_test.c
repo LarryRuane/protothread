@@ -1667,7 +1667,7 @@ msgq_selective_thr(env_t const env)
                 return PT_DONE ;
             }
         }
-        pt_queue_wait_send(c, c->q, c->seen) ;
+        pt_queue_wait_new(c, c->q, c->seen) ;
     }
 }
 
@@ -2060,7 +2060,7 @@ irq_select_thr(env_t const env)
                 return PT_DONE ;
             }
         }
-        pt_queue_wait_send(c, &irq_q, c->seen) ;
+        pt_queue_wait_new(c, &irq_q, c->seen) ;
     }
 }
 
