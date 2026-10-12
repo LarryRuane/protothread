@@ -106,14 +106,14 @@ pt_i_queue_sent(pt_i_queue_t const * const q)
 /* Append *item_p if there is room, and set ok to whether it was. The copy is
  * by assignment from the queue's own element type, so it is type-checked.
  */
-#define pt_i_queue_put(queue, item_p, ok) \
+#define pt_i_queue_put(qp, item_p, ok) \
     do { \
         pt_i_critical_t const pt_i_qsaved = PT_CRITICAL_ENTER() ; \
-        (ok) = (queue)->q.count < (queue)->q.capacity ; \
+        (ok) = (qp)->q.count < (qp)->q.capacity ; \
         if (ok) { \
-            (queue)->slots[pt_i_queue_slot(&(queue)->q, (queue)->q.count)] = \
+            (qp)->slots[pt_i_queue_slot(&(qp)->q, (qp)->q.count)] = \
                 *(item_p) ; \
-            pt_i_queue_appended(&(queue)->q) ; \
+            pt_i_queue_appended(&(qp)->q) ; \
         } \
         PT_CRITICAL_EXIT(pt_i_qsaved) ; \
     } while (0)
@@ -121,13 +121,13 @@ pt_i_queue_sent(pt_i_queue_t const * const q)
 /* Take the oldest item into *item_p, if there is one, and set ok to whether
  * there was.
  */
-#define pt_i_queue_take(queue, item_p, ok) \
+#define pt_i_queue_take(qp, item_p, ok) \
     do { \
         pt_i_critical_t const pt_i_qsaved = PT_CRITICAL_ENTER() ; \
-        (ok) = (queue)->q.count > 0 ; \
+        (ok) = (qp)->q.count > 0 ; \
         if (ok) { \
-            *(item_p) = (queue)->slots[(queue)->q.head] ; \
-            pt_i_queue_took_oldest(&(queue)->q) ; \
+            *(item_p) = (qp)->slots[(qp)->q.head] ; \
+            pt_i_queue_took_oldest(&(qp)->q) ; \
         } \
         PT_CRITICAL_EXIT(pt_i_qsaved) ; \
     } while (0)
