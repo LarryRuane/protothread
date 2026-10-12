@@ -271,7 +271,7 @@ The difference grows with the sequence. Every `pt_wait()` in a protothread is a 
 
 ### The same, with a queue ###
 
-The mailbox above is a queue of one, written by hand. With a [message queue](#message-queues) from `protothread_queue.h`, the two protothreads shrink to their loops:
+The mailbox above is a queue of one, written by hand. With a [message queue](doc/queue.md) from `protothread_queue.h`, the two protothreads shrink to their loops:
 ```
  PT_QUEUE_DEFINE(intq, int)
 
@@ -924,238 +924,19 @@ In the common, uncontended case the lookup is trusted without a second look.
 
 ### Semaphores ###
 
-`#include "protothread_sem.h"`. A semaphore is an ordinary `unsigned int` that you initialize yourself (to 1 for mutual exclusion). Acquiring one needs a `pt_sem_env_t` context, which lives in your context structure like any other nested function's.
-
-> `void pt_sem_acquire(struct context_t *c, pt_sem_env_t *sem_env, unsigned int *value)`
->
-> Wait until the semaphore is non-zero, then decrement it. May block.
-
-> `void pt_sem_release(pt_sem_env_t *sem_env, unsigned int *value)`
->
-> Increment the semaphore and wake any waiters. Guaranteed not to block.
-
-This implementation is deliberately not fair. Releasing the semaphore wakes the waiters, but they can't take it until they run, so a protothread that releases and then reacquires without blocking in between gets it back ahead of them, and can keep doing so indefinitely. The fair alternative is to hand the semaphore straight to the oldest waiter, but then two protothreads that both use it heavily end up taking turns, with a context switch on every use and the hold time stretched by the wait to be scheduled. Those are convoys, and avoiding them is the reason event-wait semaphores work this way (see section 13 of [Process Synchronization in the UTS Kernel](https://static.usenix.org/publications/compsystems/1990/sum_ruane.pdf)). If a waiter mustn't starve, call `pt_yield()` between releasing and reacquiring, so the woken waiters run first.
+`protothread_sem.h`: counting semaphores, deliberately not fair, to avoid convoys. See [doc/sem.md](doc/sem.md).
 
 ### Timers ###
 
-`#include "protothread_timer.h"`. The library never reads a clock -- there is no portable one, and depending on one would cost the freestanding property. Instead you drive it from whatever time source you already have: a tick interrupt, a SysTick handler, or the idle loop. A sleep is measured from the most recent `pt_timer_run()`, so the resolution of `pt_sleep()` is your tick period.
-
-> `void pt_timers_init(pt_timers_t *timers, pt_time_t now)`
->
-> Initialize a timer list. There is usually one per clock, and one clock.
-
-> `void pt_sleep(struct context_t *c, pt_timer_env_t *timer_env, pt_timers_t *timers, pt_time_t ticks)`
->
-> Block for `ticks`. Needs a `pt_timer_env_t` in the calling context structure, like any other nested function's context.
-
-> `void pt_timer_run(protothread_t, pt_timers_t *timers, pt_time_t now)`
->
-> Wake every protothread whose deadline has arrived, and record `now` as the base for subsequent sleeps. `now` may jump by more than one tick; everything that became due is woken. Safe to call from an interrupt handler if the `PT_CRITICAL_*` macros are defined.
-
-> `bool_t pt_timer_next(pt_timers_t const *timers, pt_time_t *deadline)`
->
-> Report the soonest deadline, or FALSE if nothing is sleeping. Use this in an idle loop to decide how long the CPU can be stopped.
-
-> `bool_t pt_timer_cancel(pt_timers_t *timers, pt_timer_env_t *timer_env)`
->
-> Take a sleeper off the timer list; returns TRUE if it was still pending. This does **not** wake it: the protothread stays blocked in `pt_sleep()`. It's for use before `pt_kill()`ing or freeing a protothread that might be sleeping, since otherwise the timer list keeps a dangling entry.
-
-The clock type is `PT_TIME_T` (default `uint32_t`), paired with the signed `PT_TIME_DIFF_T` (default `int32_t`). **Counter wraparound is handled correctly**: comparisons use a signed difference rather than a direct `>`, so a 32-bit millisecond clock behaves properly across its 49-day rollover. The one requirement is that no live deadline be more than half the counter range in the future -- about 24 days for that clock.
-
-A typical bare-metal idle loop. The ready function tells it whether an interrupt made anything ready after the last run, so it never sleeps with work waiting (see [Lost wakeups](#lost-wakeups)):
-
-```c
-static volatile bool work;
-static void on_ready(void *env) { work = true; }    /* may run in an interrupt */
-
-protothread_set_ready_function(pt, on_ready, NULL);
-for (;;) {
-    pt_timer_run(pt, &timers, clock_now());
-    work = false;
-    while (protothread_run(pt));
-    disable_interrupts();
-    if (!work) {
-        if (pt_timer_next(&timers, &deadline)) {
-            sleep_until(deadline);      /* like WFI, wakes for a pending interrupt */
-        } else {
-            wait_for_interrupt();
-        }
-    }
-    enable_interrupts();
-}
-```
+`protothread_timer.h`: `pt_sleep()`, driven by whatever clock you already have, so the library never reads one. Safe to drive from a tick interrupt, and wraparound is handled. See [doc/timer.md](doc/timer.md), which includes a bare-metal idle loop.
 
 ### Reader-writer locks ###
 
-`#include "protothread_lock.h"`. A `pt_lock_t` allows either many concurrent readers or one writer. Each thread needs a `pt_lock_env_t` in its context structure.
-
-> `void pt_lock_init(pt_lock_t *lock)`
->
-> Initialize the lock. Must be called before use.
-
-> `void pt_lock_acquire_read(struct context_t *c, pt_lock_env_t *lock_env, pt_lock_t *lock)`
->
-> Acquire the lock for shared (read) access. May block.
-
-> `void pt_lock_acquire_write(struct context_t *c, pt_lock_env_t *lock_env, pt_lock_t *lock)`
->
-> Acquire the lock for exclusive (write) access. May block.
-
-> `void pt_lock_release_read(pt_lock_env_t *lock_env, pt_lock_t *lock)`
->
-> `void pt_lock_release_write(pt_lock_env_t *lock_env, pt_lock_t *lock)`
->
-> Release the lock. Guaranteed not to block.
-
-> `bool_t pt_lock_cancel(pt_lock_env_t *lock_env, pt_lock_t *lock)`
->
-> Take a request out of the lock, whether it is still queued or already granted, and start whatever that lets proceed. Returns TRUE if the lock still knew about the request. This does **not** wake the protothread, so it is for use before `pt_kill()`ing or freeing one that might be using the lock, exactly as `pt_timer_cancel()` is for one that might be sleeping. Guaranteed not to block.
-
-Requests are granted in arrival order, so a steady stream of readers cannot starve a waiting writer. Consecutive readers at the head of the queue are all started together. Unlike the semaphore, the lock is fair: a release hands it directly to the next request before waking it, so a protothread that releases and immediately reacquires waits its turn. The cost is the convoy described above. The same queue is why a protothread that might be using the lock needs `pt_lock_cancel()` before it is killed or freed: its request would otherwise stay queued, and be granted to a thread that never releases it.
-
-There's no upgrade call, because you don't need one. Release the read lock, acquire the write lock, and ask whether that blocked:
-
-```c
-pt_lock_release_read(&c->lock_env, c->lock);
-pt_lock_acquire_write(c, &c->lock_env, c->lock);
-if (pt_call_waited(c)) {
-    /* others may have written while we waited; re-check what we read */
-}
-```
-
-Releasing never blocks, so if acquiring didn't either, nothing else ran in between and the upgrade was atomic. That's the case when you were the only reader and nobody was queued. Otherwise you still end up holding the write lock, but anything you read under the read lock may be stale. The answer can only be wrong in the safe direction: if another reader was holding the lock, it reports a wait even though nothing changed.
+`protothread_lock.h`: many readers or one writer, granted in arrival order so writers don't starve. See [doc/lock.md](doc/lock.md), including why there's no upgrade call.
 
 ### Message queues ###
 
-`#include "protothread_queue.h"`. A queue is a first-in, first-out buffer of fixed capacity in storage you supply, so it needs no allocator; Go calls the same thing a channel. Queues are type-safe: `PT_QUEUE_DEFINE(name, type)` generates a queue type `name_t` and its functions, much as `<sys/tree.h>` generates trees, and `pt_queue_t` is a predefined queue of `void *`.
-
-```c
-typedef struct { int kind; int value; } msg_t;
-PT_QUEUE_DEFINE(msgq, msg_t)            /* msgq_t, msgq_try_send() and the rest */
-
-msg_t slots[8];
-msgq_t q;
-msgq_init(&q, slots, 8);
-```
-
-Sending and receiving block like `pt_wait()` does, in your own protothread, so they are macros, and they work on any queue. Items go in and come out through pointers, so each is copied once each way:
-
-```c
-pt_queue_send(c, &q, &c->msg);          /* blocks while full */
-pt_queue_receive(c, &q, &c->msg);       /* blocks while empty */
-```
-
-> `void pt_queue_send(struct context_t *c, name_t *q, type const *item)`
->
-> Block while the queue is full, then append a copy of `*item`.
-
-> `void pt_queue_receive(struct context_t *c, name_t *q, type *item)`
->
-> Block while the queue is empty, then remove the oldest item into `*item`.
-
-> `void pt_queue_wait_new(struct context_t *c, name_t *q, unsigned int seen)`
->
-> `unsigned int name_sent(name_t const *q)`
->
-> Block, without taking anything, until something has been sent since `name_sent()` returned `seen`. See the example below.
-
-Like the other blocking macros, these evaluate `q` and `item` more than once, so neither may have side effects. They aren't `pt_call()`s, so `pt_call_waited()` doesn't apply to them; with queues it is seldom needed, since what a protothread needs to know arrives in the message rather than in memory that others may have changed.
-
-> `bool_t name_try_send(protothread_t, name_t *q, type const *item)`
->
-> `bool_t name_try_receive(protothread_t, name_t *q, type *item)`
->
-> The same as send and receive, but return FALSE instead of blocking. `try_send()` is safe to call from an interrupt handler once the `PT_CRITICAL_*` macros are defined, and a protothread blocked in `pt_queue_receive()` or `pt_queue_wait_new()` cannot miss what it sends.
-
-> `unsigned int name_count(name_t const *q)`
->
-> `type *name_at(name_t *q, unsigned int i)`
->
-> `bool_t name_remove(protothread_t, name_t *q, unsigned int i, type *item)`
->
-> Look inside the queue without blocking: the number of items, a pointer to the `i`-th oldest (0 is the next to be received), and removal of the `i`-th oldest, which keeps the rest in order. Removal moves whichever side of the gap is shorter, so taking the oldest or the newest moves nothing. `item` may be NULL to discard. A pointer from `at()` stays valid until something is removed.
-
-Like the semaphore, a queue isn't strictly fair: a protothread that finds it non-empty takes an item even if another was woken for it first, for the same reason, to avoid convoys. Every wakeup is a broadcast, and senders and receivers wait on different channels, so sending wakes only receivers and receiving wakes only senders. Items are copied by assignment, and for an item larger than a few words the compiler may emit a call to `memcpy` (clang targeting Cortex-M does so from 16 bytes at `-Os`). Every embedded toolchain provides it, but if you are avoiding it, queue pointers instead.
-
-**There is no `select`.** Go's `select` waits on several channels at once; a protothread waits on one channel at a time, and that stays true here. Pike's [Go Concurrency Patterns](https://www.youtube.com/watch?v=f6kdp27TYZs) talk shows the usual alternative just before it introduces `select`: *fan-in*, where everything a receiver might want arrives on one queue. With different kinds of message, the item is a tagged union:
-
-```c
-typedef struct {
-    enum { REPLY, STATUS, TIMEOUT } kind;
-    unsigned int gen;               /* for timeouts; see below */
-    union { struct reply reply; struct status status; } u;
-} msg_t;
-```
-
-**Timeouts.** A timeout is just another sender: a small protothread that sleeps, using `pt_sleep()` from [timers](#timers), and then sends a `TIMEOUT` message into the same queue. That is all Go's `time.After()` does:
-
-```c
-static pt_t
-after_thr(void * const env)
-{
-    after_context_t * const c = env;
-    pt_resume(c);
-    pt_sleep(c, &c->timer_env, c->timers, 10);
-    pt_queue_send(c, c->q, &c->msg);
-    return PT_DONE;
-}
-```
-
-Go gets one thing for free here. Its timeout has a channel of its own, so when the reply wins, that channel is simply forgotten. Here the timeout shares the reply's queue, so two things are needed. When the reply wins, stop the timer, which also frees its context for the next wait. And since the timer may already have sent by then, number each wait, and skip a `TIMEOUT` left over from an earlier one:
-
-```c
-c->gen++;
-c->after.msg.kind = TIMEOUT;
-c->after.msg.gen = c->gen;
-pt_create(pt_get_pt(c), &c->after.pt_thread, after_thr, &c->after);
-do {
-    pt_queue_receive(c, &q, &c->msg);
-} while (c->msg.kind == TIMEOUT && c->msg.gen != c->gen);
-if (c->msg.kind != TIMEOUT) {
-    pt_timer_cancel(&timers, &c->after.timer_env);
-    pt_kill(&c->after.pt_thread);
-}
-```
-
-When a receiver wants one kind of message while others wait their turn, it can look before it takes. `pt_queue_wait_new()` blocks only until something new arrives, so messages it has already passed over don't wake it again. Note where `seen` is read: *before* looking, so that a message sent while the receiver looks, even by an interrupt, ends the wait at once instead of being slept through:
-
-```c
-for (;;) {
-    c->seen = msgq_sent(&q);
-    for (c->i = 0; c->i < msgq_count(&q); c->i++) {
-        if (msgq_at(&q, c->i)->kind == REPLY) {
-            msgq_remove(pt_get_pt(c), &q, c->i, &c->msg);
-            goto got_reply;
-        }
-    }
-    pt_queue_wait_new(c, &q, c->seen);
-}
-```
-
-That is linear in the length of the queue, which is fine for the queues a microcontroller has.
-
-**Queues of queues.** In Go a channel can be sent over a channel, and it's what makes request and reply easy: the client sends its question together with a channel for the answer, and the server replies on whatever channel it was given. A Go channel is a reference, so the equivalent here is a pointer to a queue:
-
-```c
-typedef struct {
-    int x;
-    intq_t * reply;                 /* where the answer goes */
-} request_t;
-PT_QUEUE_DEFINE(requestq, request_t)
-
-/* server */
-pt_queue_receive(c, &requests, &c->req);
-c->answer = c->req.x * c->req.x;
-pt_queue_send(c, c->req.reply, &c->answer);
-
-/* client, with its own reply queue in its context */
-c->req.x = 7;
-c->req.reply = &c->replies;
-pt_queue_send(c, &requests, &c->req);
-pt_queue_receive(c, &c->replies, &c->answer);
-```
-
-Send the pointer, never the queue itself: a copy of a queue would be a second queue sharing the first one's storage. The reply queue also has to outlive the request, which it does here because the client waits for its answer.
+`protothread_queue.h`: type-safe, fixed-capacity queues in storage you supply, what Go calls channels. `try_send()` is safe from an interrupt handler. There's no `select`, and [doc/queue.md](doc/queue.md) shows what to do instead: fan-in, timeouts, selective receive and queues of queues.
 
 ## License ##
 

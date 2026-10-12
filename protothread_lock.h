@@ -256,7 +256,7 @@ pt_lock_cancel(pt_lock_env_t *c, pt_lock_t *lock)
  *
  * An upgrade needs no routine of its own: release the read lock, acquire the
  * write lock, and pt_call_waited() says whether that blocked. If it didn't,
- * nothing else ran and the upgrade was atomic; see README.md.
+ * nothing else ran and the upgrade was atomic; see doc/lock.md.
  */
 
 #endif /* PROTOTHREAD_LOCK_H */
