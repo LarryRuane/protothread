@@ -74,7 +74,7 @@ after_thr(void * const env)
 }
 ```
 
-Go gets one thing for free here. Its timeout has a channel of its own, so when the reply wins, that channel is simply forgotten. Here the timeout shares the reply's queue, so two things are needed. When the reply wins, stop the timer, which also frees its context for the next wait. And since the timer may already have sent by then, number each wait, and skip a `TIMEOUT` left over from an earlier one:
+In Go, the timeout has a channel of its own, so when the reply wins, that channel is simply forgotten. Here the timeout shares the reply's queue, so two things are needed. When the reply wins, stop the timer, which also frees its context for the next wait. And since the timer may already have sent by then, number each wait, and skip a `TIMEOUT` left over from an earlier one:
 
 ```c
 c->gen++;
@@ -90,7 +90,7 @@ if (c->msg.kind != TIMEOUT) {
 }
 ```
 
-When a receiver wants one kind of message while others wait their turn, it can look before it takes. `pt_queue_wait_new()` blocks only until something new arrives, so messages it has already passed over don't wake it again. Note where `seen` is read: *before* looking, so that a message sent while the receiver looks, even by an interrupt, ends the wait at once instead of being slept through:
+When a receiver wants one kind of message while others wait their turn, it can look before it takes. `pt_queue_wait_new()` blocks only until something new arrives, so messages it has already passed over don't wake it again. `seen` is read *before* looking, so that a message sent while the receiver looks, even by an interrupt, ends the wait at once instead of being slept through:
 
 ```c
 for (;;) {
