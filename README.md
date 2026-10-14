@@ -60,7 +60,7 @@ cmake -S . -B build && cmake --build build && ./build/pttest
 
 ### The API ###
 
-The core is twenty-one entries in the following two tables, all in `protothread.h`. The `protothread_` prefix is used for operations on the overall protothread object; the `pt_` prefix is for operations involving specific protothreads. Everything else in `protothread.h` is internal and has a `pt_i_` or `PT_I_` prefix. Anything *without* those prefixes is API you can rely on, and anything with one may change in a later release.
+The core is twenty-two entries in the following two tables, all in `protothread.h`. The `protothread_` prefix is used for operations on the overall protothread object; the `pt_` prefix is for operations involving specific protothreads. Everything else in `protothread.h` is internal and has a `pt_i_` or `PT_I_` prefix. Anything *without* those prefixes is API you can rely on, and anything with one may change in a later release.
 
 **The scheduler**
 
@@ -74,6 +74,7 @@ The core is twenty-one entries in the following two tables, all in `protothread.
 | `protothread_set_ready_function(s, f, env)` | called when the run list becomes non-empty |
 | `pt_create(s, thread, func, env)` | create a protothread and make it ready |
 | `pt_broadcast(s, channel)` | make every waiter on `channel` ready; the one to use by default |
+| `pt_broadcast_all(s)` | make every waiter on every channel ready |
 | `pt_signal(s, channel)` | make only the oldest waiter on `channel` ready |
 | `pt_kill(thread)` | unschedule one; true if it was still scheduled |
 | `pt_is_alive(thread)` | has it not yet exited or been killed? never blocks |
@@ -333,13 +334,13 @@ and `protothread_init()` on static storage, a program that uses protothreads (an
 
 **By default this library is not interrupt-safe.** The scheduler's lists are updated with several stores that are not atomic with respect to an interrupt handler. If an interrupt occurs in the middle of one, a protothread can be silently and permanently orphaned. It's removed from its wait list, never placed on the run list, and no future signal can reach it. No assertion fires.
 
-So by default, `pt_signal()`, `pt_broadcast()`, and `pt_kill()` must be called only from thread context, never from an interrupt handler.
+So by default, `pt_signal()`, `pt_broadcast()`, `pt_broadcast_all()`, and `pt_kill()` must be called only from thread context, never from an interrupt handler.
 
 Defining three macros ([how](#defining-the-critical-section-macros)) eliminates that restriction, for `pt_timer_run()` too. It does **not** change it for `protothread_run()`, which must never be called from an interrupt handler. It runs your thread code, and an interrupt handler that re-enters it would run a second protothread on top of the one already running. These are the restrictions:
 
 | | from an interrupt handler |
 |---|---|
-| `pt_signal()`, `pt_broadcast()` | lists stay intact once `PT_CRITICAL_*` are defined |
+| `pt_signal()`, `pt_broadcast()`, `pt_broadcast_all()` | lists stay intact once `PT_CRITICAL_*` are defined |
 | `pt_kill()`, `pt_timer_run()` | lists stay intact once `PT_CRITICAL_*` are defined |
 | `protothread_run()` | **never safe** |
 | `pt_wait()`, `pt_yield()`, `pt_call()` | never -- these only run inside a protothread |
@@ -578,7 +579,9 @@ The debug (testing) define `PT_SIGNAL_WAKES_ALL` checks the other direction. If 
 
 The analogy has one limitation. A real spin loop can never miss anything, because it re-tests continuously. `pt_wait()`'s delay ends only when somebody signals, so a missing signal causes a hang. A missing signal could be a plain logic error, or it could come from a timing window (see [Lost wakeups](#lost-wakeups)).
 
-In a large, mission-critical system, consider calling `pt_broadcast()` on _every_ channel periodically. A missed-wakeup bug then causes a delay instead of a hang.
+In a large, mission-critical system, consider calling `pt_broadcast_all()` periodically. It wakes every waiting protothread, so a missed-wakeup bug causes a delay instead of a hang.
+
+It can also be part of an orderly shutdown process. Set a flag that every wait loop also tests, call `pt_broadcast_all()`, and call `protothread_run()` until it returns false. Each protothread wakes, sees the flag, releases what it holds, and returns. This only works for waits you write yourself. A protothread blocked inside a library call, such as a semaphore acquire or a queue receive, re-tests that call's condition and goes back to waiting.
 
 ## Deterministic execution ##
 
@@ -770,7 +773,7 @@ static inline uint32_t pt_critical_enter(void) {
 #define PT_CRITICAL_EXIT(s) __set_PRIMASK(s)
 ```
 
-The critical sections are short and O(1), except that `pt_signal()`, `pt_broadcast()`, and `pt_kill()` walk one wait list, and `pt_sleep()` and `pt_timer_cancel()` walk the timer list. If interrupt latency is critical, keep `PT_NWAIT` large enough that wait lists stay short, or have the interrupt handler set a flag that the main loop turns into a `pt_signal()` at a safe point.
+The critical sections are short and O(1), except that `pt_signal()`, `pt_broadcast()`, and `pt_kill()` walk one wait list, `pt_broadcast_all()` walks each one in its own critical section, and `pt_sleep()` and `pt_timer_cancel()` walk the timer list. If interrupt latency is critical, keep `PT_NWAIT` large enough that wait lists stay short, or have the interrupt handler set a flag that the main loop turns into a `pt_signal()` at a safe point.
 
 ## Compiler requirements ##
 
@@ -863,6 +866,10 @@ What matters is overlap, not which thread. Before the scheduler first runs there
 > `void pt_broadcast(protothread_t, void *channel)`
 >
 > Send a signal to the given channel, which wakes up (schedules) all threads waiting on the channel to run in the same order they blocked. If there are no threads waiting, this call has no effect. The signal isn't queued (a channel has no memory). These threads queue behind all ready threads. Analogous to [POSIX pthread\_cond\_broadcast()](http://www.opengroup.org/onlinepubs/009695399/functions/pthread_cond_broadcast.html).
+
+> `void pt_broadcast_all(protothread_t)`
+>
+> Wake every waiting thread, whatever its channel. Each one re-tests its condition, and most go straight back to waiting, so this is always safe. Calling it periodically turns a lost wakeup from a hang into a delay (see [Wait channels](#wait-channels)). It costs time proportional to `PT_NWAIT` plus the number of waiters.
 
 > `void pt_signal(protothread_t, void *channel)`
 >

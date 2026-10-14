@@ -45,6 +45,7 @@
  *   pt_create(s, thread, func, env)  create a protothread and make it ready
  *   pt_signal(s, channel)            make the oldest waiter on channel ready
  *   pt_broadcast(s, channel)         make every waiter on channel ready
+ *   pt_broadcast_all(s)              make every waiter on every channel ready
  *   pt_kill(thread)                  unschedule one; true if it was scheduled
  *   pt_is_alive(thread)              has it not yet exited or been killed?
  *
@@ -126,9 +127,9 @@ typedef void * env_t ;
  *
  * The scheduler's lists are updated with several stores that are not atomic
  * with respect to an interrupt handler. By default this library is NOT
- * interrupt-safe: pt_signal(), pt_broadcast() and pt_kill() must be called
- * from thread context only. Calling them from an interrupt handler can
- * silently and permanently orphan a protothread.
+ * interrupt-safe: pt_signal(), pt_broadcast(), pt_broadcast_all() and
+ * pt_kill() must be called from thread context only. Calling them from an
+ * interrupt handler can silently and permanently orphan a protothread.
  *
  * Define these to disable and restore interrupts to make those calls safe.
  * They nest, so EXIT must restore the saved state rather than
@@ -141,8 +142,9 @@ typedef void * env_t ;
  *   #define PT_CRITICAL_EXIT(s) __set_PRIMASK(s)
  *
  * The critical sections are short and O(1), except that pt_signal(),
- * pt_broadcast() and pt_kill() walk one wait list, and pt_sleep() and
- * pt_timer_cancel() walk the timer list.
+ * pt_broadcast() and pt_kill() walk one wait list, pt_broadcast_all() walks
+ * each in its own critical section, and pt_sleep() and pt_timer_cancel()
+ * walk the timer list.
  */
 #ifndef PT_CRITICAL_T
 #define PT_CRITICAL_T int
@@ -738,6 +740,33 @@ static inline void
 pt_broadcast(protothread_t const s, void * const channel)
 {
     pt_i_wake(s, channel, false) ;
+}
+
+/* Make every waiting thread ready, whatever its channel; each re-tests */
+static inline void
+pt_broadcast_all(protothread_t const s)
+{
+    bool_t notify = false ;
+    int i ;
+
+    for (i = 0; i < PT_NWAIT; i++) {
+        pt_thread_t ** const wq = &s->wait[i] ;
+        /* only a protothread can add a waiter, so an empty bucket stays so */
+        if (*wq == NULL) {
+            continue ;
+        }
+        /* one bucket per critical section, oldest waiter first */
+        const pt_i_critical_t saved = PT_CRITICAL_ENTER() ;
+        while (*wq) {
+            if (pt_i_link_ready(s, pt_i_unlink_oldest(wq))) {
+                notify = true ;
+            }
+        }
+        PT_CRITICAL_EXIT(saved) ;
+    }
+    if (notify) {
+        pt_i_notify_ready(s) ;
+    }
 }
 
 /* This is used to prevent a thread from scheduling again. This can be

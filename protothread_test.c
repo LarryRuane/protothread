@@ -849,6 +849,115 @@ test_ready(void)
 
 /******************************************************************************/
 
+/* pt_broadcast_all() recovers a lost wakeup, and every other kind of waiter
+ * re-tests and goes back to waiting.
+ */
+typedef struct ball_context_s {
+    pt_thread_t pt_thread ;
+    pt_func_t pt_func ;
+    pt_sem_env_t sem_env ;
+    pt_timer_env_t timer_env ;
+    struct ball_global_s * g ;
+    int wakes ;
+} ball_context_t ;
+
+typedef struct ball_global_s {
+    ball_context_t lost, sem, join, sleep ;
+    pt_timers_t timers ;
+    unsigned int sem_value ;
+    int flag ;
+} ball_global_t ;
+
+static pt_t
+ball_lost_thr(env_t const env)
+{
+    ball_context_t * const c = env ;
+    pt_resume(c) ;
+    while (!c->g->flag) {
+        pt_wait(c, &c->g->flag) ;
+        c->wakes++ ;
+    }
+    return PT_DONE ;
+}
+
+static pt_t
+ball_sem_thr(env_t const env)
+{
+    ball_context_t * const c = env ;
+    pt_resume(c) ;
+    pt_sem_acquire(c, &c->sem_env, &c->g->sem_value) ;
+    return PT_DONE ;
+}
+
+static pt_t
+ball_join_thr(env_t const env)
+{
+    ball_context_t * const c = env ;
+    pt_resume(c) ;
+    pt_join(c, &c->g->sem.pt_thread) ;
+    return PT_DONE ;
+}
+
+static pt_t
+ball_sleep_thr(env_t const env)
+{
+    ball_context_t * const c = env ;
+    pt_resume(c) ;
+    pt_sleep(c, &c->timer_env, &c->g->timers, 10) ;
+    return PT_DONE ;
+}
+
+static void
+test_broadcast_all(void)
+{
+    protothread_t const pt = protothread_create() ;
+    ball_global_t g ;
+    int i ;
+
+    memset(&g, 0, sizeof(g)) ;
+    pt_timers_init(&g.timers, 0) ;
+    g.lost.g = g.sem.g = g.join.g = g.sleep.g = &g ;
+
+    /* nothing waiting is a no-op */
+    pt_broadcast_all(pt) ;
+    check(!protothread_run(pt)) ;
+
+    pt_create(pt, &g.lost.pt_thread, ball_lost_thr, &g.lost) ;
+    pt_create(pt, &g.sem.pt_thread, ball_sem_thr, &g.sem) ;
+    pt_create(pt, &g.join.pt_thread, ball_join_thr, &g.join) ;
+    pt_create(pt, &g.sleep.pt_thread, ball_sleep_thr, &g.sleep) ;
+    while (protothread_run(pt)) ;
+
+    /* the condition becomes true, but nobody signals */
+    g.flag = 1 ;
+    protothread_set_ready_function(pt, set_ready, &ready) ;
+    for (i = 0; i < 2; i++) {
+        pt_broadcast_all(pt) ;
+        check(ready) ;          /* notified once, not once per waiter */
+        ready = false ;
+        while (protothread_run(pt)) ;
+        check(!pt_is_alive(&g.lost.pt_thread)) ;
+        check(g.lost.wakes == 1) ;
+        check(pt_is_alive(&g.sem.pt_thread)) ;
+        check(pt_is_alive(&g.join.pt_thread)) ;
+        check(pt_is_alive(&g.sleep.pt_thread)) ;
+    }
+    protothread_set_ready_function(pt, NULL, NULL) ;
+
+    /* the real events still work */
+    g.sem_value = 1 ;
+    pt_broadcast(pt, &g.sem_value) ;
+    pt_timer_run(pt, &g.timers, 10) ;
+    while (protothread_run(pt)) ;
+    check(!pt_is_alive(&g.sem.pt_thread)) ;
+    check(!pt_is_alive(&g.join.pt_thread)) ;
+    check(!pt_is_alive(&g.sleep.pt_thread)) ;
+    check(g.sem_value == 0) ;
+    protothread_free(pt) ;
+}
+
+/******************************************************************************/
+
 typedef struct kill_context_s {
     pt_thread_t pt_thread ;
     pt_func_t pt_func ;
@@ -2223,6 +2332,7 @@ main()
     test_yield() ;
     test_wait() ;
     test_broadcast() ;
+    test_broadcast_all() ;
     test_pc() ;
     test_pc_big() ;
     test_recursive() ;

@@ -32,6 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `at()`, `remove()`, and `pt_queue_wait_new()` let a receiver take one kind
   of message while others wait, which with a tagged union stands in for Go's
   `select`.
+- `pt_broadcast_all(s)`, which wakes every waiting protothread, whatever its
+  channel. Each one re-tests its condition, so it's always safe, and calling
+  it periodically turns a lost wakeup from a hang into a delay.
 
 ### Changed
 
