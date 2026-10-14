@@ -29,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is a predefined queue of `void *`. `pt_queue_send()` and `pt_queue_receive()`
   block when full and empty, in the caller's own context like `pt_wait()`;
   `try_send()` is safe to call from an interrupt handler; and `count()`,
-  `at()`, `remove()` and `pt_queue_wait_new()` let a receiver take one kind
+  `at()`, `remove()`, and `pt_queue_wait_new()` let a receiver take one kind
   of message while others wait, which with a tagged union stands in for Go's
   `select`.
 
@@ -64,7 +64,7 @@ essentially unchanged, but the packaging is not; see
   marked by clearing its function pointer. Creating and destroying a protothread
   costs about 17% more than before, 2.4 to 2.8 ns, since the scheduler now has
   to notice exits; a context switch is unchanged at 4.7 ns.
-- `protothread_timer.h`: `pt_sleep()`, `pt_timer_run()`, `pt_timer_next()` and
+- `protothread_timer.h`: `pt_sleep()`, `pt_timer_run()`, `pt_timer_next()`, and
   `pt_timer_cancel()`. The library never reads a clock; you drive it from a tick
   interrupt or an idle loop, and a 32-bit millisecond clock is handled correctly
   across its rollover.
@@ -73,12 +73,12 @@ essentially unchanged, but the packaging is not; see
   default.
 - `PT_CRITICAL_ASSERT()`, which checks that internal list functions are entered
   only with a critical section already held.
-- `PT_NO_MALLOC`, which drops `<stdlib.h>`, `protothread_create()` and
+- `PT_NO_MALLOC`, which drops `<stdlib.h>`, `protothread_create()`, and
   `protothread_free()` for systems with no heap.
 - `PT_NWAIT` is configurable. It was fixed, and cost 8 KB per `protothread_t`.
 - `pt_assert()` can be defined by the application, to avoid `<assert.h>`.
 - Version macros `PT_VERSION_MAJOR`, `PT_VERSION_MINOR`, `PT_VERSION_PATCH`,
-  `PT_VERSION_NUMBER`, `PT_VERSION_STRING` and `PT_VERSION_AT_LEAST()`, so a
+  `PT_VERSION_NUMBER`, `PT_VERSION_STRING`, and `PT_VERSION_AT_LEAST()`, so a
   vendored copy of the headers can identify itself.
 - The headers compile as C++, from C\+\+11 on. Top-level protothread functions need
   an explicit cast from `env_t`; nested ones can take a typed context instead.
@@ -88,7 +88,7 @@ essentially unchanged, but the packaging is not; see
 - A benchmark against POSIX threads, built with `-DPROTOTHREAD_BENCH=ON`.
 - Continuous integration: gcc and clang on Linux and Apple clang on macOS, across
   debug and release configurations, `-std=c99` through `c23`, C++, and the
-  address, undefined-behavior and thread sanitizers; plus checks that a
+  address, undefined-behavior, and thread sanitizers; plus checks that a
   freestanding build needs no libc symbols and that internal list functions are
   only entered inside a critical section.
 
@@ -114,27 +114,27 @@ essentially unchanged, but the packaging is not; see
 - **Freestanding.** The headers include only `<stddef.h>`, `<stdint.h>` and
   `<stdbool.h>` unconditionally. `<string.h>` is no longer included at all,
   `<assert.h>` only while `PT_DEBUG` is on, and `<stdlib.h>` only unless
-  `PT_NO_MALLOC` is defined, so code that got `memset`, `assert` or `malloc`
+  `PT_NO_MALLOC` is defined, so code that got `memset`, `assert`, or `malloc`
   transitively must include them itself. Code relying on `assert` can build
   with the default `PT_DEBUG` and fail with `PT_DEBUG=0`.
 - Internal names now carry a `pt_i_` or `PT_I_` prefix, so that any name without
   one is public API. Several were visible in the 1.x headers and are renamed:
   `pt_wake()`, `pt_get_protothread()`, `pt_create_thread()`, `pt_add_ready()`,
-  `pt_link()`, `pt_unlink()` and the other scheduler internals; `PT_WAIT`,
-  `PT_RETURN_WAIT` and `PT_RETURN_DONE`; the lock's `PT_LOCK_READ`,
-  `PT_LOCK_WRITE`, `PT_LOCK_READING` and `PT_LOCK_WRITING`; and
-  `pt_sem_acquire_f()`, `pt_lock_acquire_read_f()` and
+  `pt_link()`, `pt_unlink()`, and the other scheduler internals; `PT_WAIT`,
+  `PT_RETURN_WAIT`, and `PT_RETURN_DONE`; the lock's `PT_LOCK_READ`,
+  `PT_LOCK_WRITE`, `PT_LOCK_READING`, and `PT_LOCK_WRITING`; and
+  `pt_sem_acquire_f()`, `pt_lock_acquire_read_f()`, and
   `pt_lock_acquire_write_f()`. `state_t` is removed in favor of `protothread_t`,
   which is the same type. Code that uses only the documented API is
   unaffected.
-- The struct tags `_pt_sem_env_t`, `_pt_lock_env_t` and `_pt_lock_t` are now
-  `pt_sem_env_s`, `pt_lock_env_s` and `pt_lock_s`, because identifiers beginning
+- The struct tags `_pt_sem_env_t`, `_pt_lock_env_t`, and `_pt_lock_t` are now
+  `pt_sem_env_s`, `pt_lock_env_s`, and `pt_lock_s`, because identifiers beginning
   with an underscore are reserved to the C implementation. The typedef names are
   unchanged.
 - The license changed from Apache-2.0 to MIT.
 - The README was substantially rewritten, with a complete API listing and new
-  sections on local variables, wait channels, interrupt safety and lost
-  wakeups, deterministic testing, multi-core systems and blocking system calls.
+  sections on local variables, wait channels, interrupt safety, and lost
+  wakeups, deterministic testing, multi-core systems, and blocking system calls.
 
 ### Removed
 

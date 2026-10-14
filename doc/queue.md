@@ -1,6 +1,6 @@
 # Message queues
 
-`#include "protothread_queue.h"`. A queue is a first-in, first-out buffer of fixed capacity in storage you supply, so it needs no allocator; Go calls the same thing a channel. Queues are type-safe: `PT_QUEUE_DEFINE(name, type)` generates a queue type `name_t` and its functions, much as `<sys/tree.h>` generates trees, and `pt_queue_t` is a predefined queue of `void *`.
+`#include "protothread_queue.h"`. A queue is a first-in, first-out buffer of fixed capacity in storage you supply, so it needs no allocator. Go calls the same thing a channel. Queues are type-safe. `PT_QUEUE_DEFINE(name, type)` generates a queue type `name_t` and its functions, much as `<sys/tree.h>` generates trees, and `pt_queue_t` is a predefined queue of `void *`.
 
 ```c
 typedef struct { int kind; int value; } msg_t;
@@ -32,7 +32,7 @@ pt_queue_receive(c, &q, &c->msg);       /* blocks while empty */
 >
 > Block, without taking anything, until something has been sent since `name_sent()` returned `seen`. See the example below.
 
-Like the other blocking macros, these evaluate `q` and `item` more than once, so neither may have side effects. They aren't `pt_call()`s, so `pt_call_waited()` doesn't apply to them; with queues it is seldom needed, since what a protothread needs to know arrives in the message rather than in memory that others may have changed.
+Like the other blocking macros, these evaluate `q` and `item` more than once, so neither may have side effects. They aren't `pt_call()`s, so `pt_call_waited()` doesn't apply to them. With queues it's seldom needed, since what a protothread needs to know arrives in the message, not in memory that others may have changed.
 
 > `bool_t name_try_send(protothread_t, name_t *q, type const *item)`
 >
@@ -46,11 +46,11 @@ Like the other blocking macros, these evaluate `q` and `item` more than once, so
 >
 > `bool_t name_remove(protothread_t, name_t *q, unsigned int i, type *item)`
 >
-> Look inside the queue without blocking: the number of items, a pointer to the `i`-th oldest (0 is the next to be received), and removal of the `i`-th oldest, which keeps the rest in order. Removal moves whichever side of the gap is shorter, so taking the oldest or the newest moves nothing. `item` may be NULL to discard. A pointer from `at()` stays valid until something is removed.
+> These look inside the queue without blocking. They return the number of items, a pointer to the `i`-th oldest (0 is the next to be received), and remove the `i`-th oldest while keeping the rest in order. `item` may be NULL to discard. A pointer from `at()` stays valid until something is removed.
 
-Like the [semaphore](sem.md), a queue isn't strictly fair: a protothread that finds it non-empty takes an item even if another was woken for it first, for the same reason, to avoid convoys. Every wakeup is a broadcast, and senders and receivers wait on different channels, so sending wakes only receivers and receiving wakes only senders. Items are copied by assignment, and for an item larger than a few words the compiler may emit a call to `memcpy` (clang targeting Cortex-M does so from 16 bytes at `-Os`). Every embedded toolchain provides it, but if you are avoiding it, queue pointers instead.
+Like the [semaphore](sem.md), a queue isn't strictly fair. A protothread that finds it non-empty takes an item even if another was woken for it first. The reason is the same, to avoid convoys. Every wakeup is a broadcast, and senders and receivers wait on different channels, so sending wakes only receivers and receiving wakes only senders. Items are copied by assignment, and for an item larger than a few words the compiler may emit a call to `memcpy` (clang targeting Cortex-M does so from 16 bytes at `-Os`). Every embedded toolchain provides it, but if you are avoiding it, queue pointers instead.
 
-**There is no `select`.** Go's `select` waits on several channels at once; a protothread waits on one channel at a time, and that stays true here. Pike's [Go Concurrency Patterns](https://www.youtube.com/watch?v=f6kdp27TYZs) talk shows the usual alternative just before it introduces `select`: *fan-in*, where everything a receiver might want arrives on one queue. With different kinds of message, the item is a tagged union:
+**There is no `select`.** Go's `select` waits on several channels at once, but a protothread waits on one channel at a time, and that stays true here. Pike's [Go Concurrency Patterns](https://www.youtube.com/watch?v=f6kdp27TYZs) talk shows the usual alternative just before it introduces `select`. It's *fan-in*, where everything a receiver might want arrives on one queue. With different kinds of message, the item is a tagged union:
 
 ```c
 typedef struct {
@@ -60,13 +60,13 @@ typedef struct {
 } msg_t;
 ```
 
-**Timeouts.** A timeout is just another sender: a small protothread that sleeps, using `pt_sleep()` from [timers](timer.md), and then sends a `TIMEOUT` message into the same queue. That is all Go's `time.After()` does:
+**Timeouts.** A timeout is just another sender, a small protothread that sleeps (using `pt_sleep()` from [timers](timer.md)) and then sends a `TIMEOUT` message into the same queue. That's all Go's `time.After()` does:
 
 ```c
 static pt_t
-after_thr(void * const env)
+timeout_thr(void * const env)
 {
-    after_context_t * const c = env;
+    timeout_context_t * const c = env;
     pt_resume(c);
     pt_sleep(c, &c->timer_env, c->timers, 10);
     pt_queue_send(c, c->q, &c->msg);
@@ -77,16 +77,15 @@ after_thr(void * const env)
 In Go, the timeout has a channel of its own, so when the reply wins, that channel is simply forgotten. Here the timeout shares the reply's queue, so two things are needed. When the reply wins, stop the timer, which also frees its context for the next wait. And since the timer may already have sent by then, number each wait, and skip a `TIMEOUT` left over from an earlier one:
 
 ```c
-c->gen++;
-c->after.msg.kind = TIMEOUT;
-c->after.msg.gen = c->gen;
-pt_create(pt_get_pt(c), &c->after.pt_thread, after_thr, &c->after);
+c->timeout.msg.kind = TIMEOUT;
+c->timeout.msg.gen = ++c->gen;
+pt_create(pt_get_pt(c), &c->timeout.pt_thread, timeout_thr, &c->timeout);
 do {
     pt_queue_receive(c, &q, &c->msg);
 } while (c->msg.kind == TIMEOUT && c->msg.gen != c->gen);
 if (c->msg.kind != TIMEOUT) {
-    pt_timer_cancel(&timers, &c->after.timer_env);
-    pt_kill(&c->after.pt_thread);
+    pt_timer_cancel(&timers, &c->timeout.timer_env);
+    pt_kill(&c->timeout.pt_thread);
 }
 ```
 
@@ -105,9 +104,9 @@ for (;;) {
 }
 ```
 
-That is linear in the length of the queue, which is fine for the queues a microcontroller has.
+That's linear in the length of the queue, which is fine for the queues a microcontroller has.
 
-**Queues of queues.** In Go a channel can be sent over a channel, and it's what makes request and reply easy: the client sends its question together with a channel for the answer, and the server replies on whatever channel it was given. A Go channel is a reference, so the equivalent here is a pointer to a queue:
+**Queues of queues.** In Go a channel can be sent over a channel, which makes request and reply easy. The client sends its question together with a channel for the answer, and the server replies on whatever channel it was given. A Go channel is a reference, so the equivalent here is a pointer to a queue:
 
 ```c
 typedef struct {
@@ -128,4 +127,4 @@ pt_queue_send(c, &requests, &c->req);
 pt_queue_receive(c, &c->replies, &c->answer);
 ```
 
-Send the pointer, never the queue itself: a copy of a queue would be a second queue sharing the first one's storage. The reply queue also has to outlive the request, which it does here because the client waits for its answer.
+Send the pointer, never the queue itself. A copy of a queue would be a second queue sharing the first one's storage. The reply queue also has to outlive the request, which it does here because the client waits for its answer.

@@ -1,6 +1,6 @@
 # Timers
 
-`#include "protothread_timer.h"`. The library never reads a clock -- there is no portable one, and depending on one would cost the freestanding property. Instead you drive it from whatever time source you already have: a tick interrupt, a SysTick handler, or the idle loop. A sleep is measured from the most recent `pt_timer_run()`, so the resolution of `pt_sleep()` is your tick period.
+`#include "protothread_timer.h"`. The library never reads a clock. There's no portable one, and depending on one would cost the freestanding property. Instead you drive it from whatever time source you already have, such as a tick interrupt, a SysTick handler, or the idle loop. A sleep is measured from the most recent `pt_timer_run()`, so the resolution of `pt_sleep()` is your tick period.
 
 > `void pt_timers_init(pt_timers_t *timers, pt_time_t now)`
 >
@@ -12,7 +12,7 @@
 
 > `void pt_timer_run(protothread_t, pt_timers_t *timers, pt_time_t now)`
 >
-> Wake every protothread whose deadline has arrived, and record `now` as the base for subsequent sleeps. `now` may jump by more than one tick; everything that became due is woken. Safe to call from an interrupt handler if the `PT_CRITICAL_*` macros are defined.
+> Wake every protothread whose deadline has arrived, and record `now` as the base for subsequent sleeps. `now` may jump by more than one tick. Everything that became due is woken. Safe to call from an interrupt handler if the `PT_CRITICAL_*` macros are defined.
 
 > `bool_t pt_timer_next(pt_timers_t const *timers, pt_time_t *deadline)`
 >
@@ -20,9 +20,9 @@
 
 > `bool_t pt_timer_cancel(pt_timers_t *timers, pt_timer_env_t *timer_env)`
 >
-> Take a sleeper off the timer list; returns TRUE if it was still pending. This does **not** wake it: the protothread stays blocked in `pt_sleep()`. It's for use before `pt_kill()`ing or freeing a protothread that might be sleeping, since otherwise the timer list keeps a dangling entry.
+> Take a sleeper off the timer list; returns TRUE if it was still pending. This does **not** wake it, and the protothread stays blocked in `pt_sleep()`. It's for use before `pt_kill()`ing or freeing a protothread that might be sleeping, since otherwise the timer list keeps a dangling entry.
 
-The clock type is `PT_TIME_T` (default `uint32_t`), paired with the signed `PT_TIME_DIFF_T` (default `int32_t`). **Counter wraparound is handled correctly**: comparisons use a signed difference rather than a direct `>`, so a 32-bit millisecond clock behaves properly across its 49-day rollover. The one requirement is that no live deadline be more than half the counter range in the future -- about 24 days for that clock.
+The clock type is `PT_TIME_T` (default `uint32_t`), paired with the signed `PT_TIME_DIFF_T` (default `int32_t`). **Counter wraparound is handled correctly.** Comparisons use a signed difference rather than a direct `>`, so a 32-bit millisecond clock behaves properly across its 49-day rollover. The one requirement is that no live deadline be more than half the counter range in the future -- about 24 days for that clock.
 
 A typical bare-metal idle loop. The ready function tells it whether an interrupt made anything ready after the last run, so it never sleeps with work waiting (see [Lost wakeups](../README.md#lost-wakeups)):
 
