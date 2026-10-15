@@ -493,7 +493,7 @@ jobs:
           export PKG_CONFIG_PATH="$PWD/inst/lib/pkgconfig"
           pkg-config --exists protothread
           echo "version: $(pkg-config --modversion protothread)"
-          test "$(pkg-config --modversion protothread)" = "2.0.0"
+          test "$(pkg-config --modversion protothread)" = "2.1.0"
           printf '#include "protothread.h"\nint main(void){struct protothread_s s;protothread_init(&s);return protothread_run(&s);}\n' > use.c
           gcc $(pkg-config --cflags protothread) use.c -o use $(pkg-config --libs protothread)
           ./use

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-10-15
+
 ### Added
 
 - `pt_wait_until(c, channel, cond)`, which tests the predicate and enqueues in
@@ -22,7 +24,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before `pt_kill()`ing or freeing one that might be using the lock, as
   `pt_timer_cancel()` is for one that might be sleeping. Without it such a kill
   left the lock granted to a dead thread and never released.
-
 - `protothread_queue.h`: message queues, what Go calls channels. A queue is a
   fixed-capacity ring buffer in storage the caller supplies, so it needs no
   allocator, and `PT_QUEUE_DEFINE(name, type)` makes it type-safe; `pt_queue_t`
@@ -47,6 +48,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the lock can tell a live request from a finished one. Internal, but it means
   a `pt_lock_env_t` must be zeroed or have been used with that lock before
   `pt_lock_cancel()` is called on it.
+- The README's sections on semaphores, timers, locks, and queues moved to
+  their own pages under `doc/`, and the rest of the README was edited for
+  readability.
 
 ## [2.0.0] - 2026-09-22
 
@@ -170,4 +174,6 @@ There were no tagged releases before 2.0.0. The earlier code, which CMake and
 pkg-config reported as version 1.0 regardless of what changed, is referred to
 here as 1.x.
 
+[Unreleased]: https://github.com/LarryRuane/protothread/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/LarryRuane/protothread/releases/tag/v2.1.0
 [2.0.0]: https://github.com/LarryRuane/protothread/releases/tag/v2.0.0

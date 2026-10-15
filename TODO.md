@@ -68,11 +68,9 @@ argument actually bites.
 
 ## More synchronization primitives ##
 
-Timers are done (`protothread_timer.h`). Remaining, most useful first:
+Timers (`protothread_timer.h`) and message queues (`protothread_queue.h`, in
+2.1.0) are done. Remaining, most useful first:
 
-  * **Message queue.** The most-used RTOS primitive in practice, and it would
-    replace the hand-rolled single-slot mailbox in the README's own example.
-    Bounded ring over a caller-supplied buffer, blocking put/get, no allocation.
   * **Event flags.** Wait for any or all of a bit mask. Pairs well with
     interrupt handlers, and is the cheap workaround for the lack of multi-wait.
   * **Wait with timeout.** Needs the pattern the reader-writer lock already
@@ -147,7 +145,7 @@ debugging into a one-line call, and costs nothing in a production build.
 
   * ~~Continuous integration~~ -- done, `.github/workflows/ci.yml`. Its first
     run found that the library did not build under clang at all.
-  * ~~Tag a release~~ -- done, `v2.0.0`.
+  * ~~Tag a release~~ -- done, `v2.0.0`, then `v2.1.0`.
   * ~~Document that `pt_wait`/`pt_signal` *is* a condition variable~~ -- done,
     the "Wait channels" section of README.md, which also makes the case for the
     interface: it is universal, and it degenerates to a busy-wait loop you can

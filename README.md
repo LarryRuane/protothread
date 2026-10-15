@@ -697,10 +697,10 @@ This project uses [semantic versioning](https://semver.org). The version lives i
 
 ```c
 #define PT_VERSION_MAJOR 2
-#define PT_VERSION_MINOR 0
+#define PT_VERSION_MINOR 1
 #define PT_VERSION_PATCH 0
-#define PT_VERSION_NUMBER   /* ordered: 20000 */
-#define PT_VERSION_STRING   /* "2.0.0", derived from the numbers */
+#define PT_VERSION_NUMBER   /* ordered: 20100 */
+#define PT_VERSION_STRING   /* "2.1.0", derived from the numbers */
 #define PT_VERSION_AT_LEAST(major, minor, patch)
 ```
 
