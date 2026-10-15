@@ -121,11 +121,8 @@ Timers are done (`protothread_timer.h`). Remaining, most useful first:
     argument for building the detector first and the recovery second, and for
     the log line naming the wait site rather than counting sweeps.
 
-    Next step: `pt_broadcast_all(s)`, which makes every waiter on every
-    channel ready. It's the sweep without the timing, so the caller decides
-    when (every N ticks of its own clock) and no channel needs to be known.
-    The end of the README's "Wait channels" section suggests doing this and
-    should point at it once it exists.
+    The recovery half now exists as `pt_broadcast_all(s)`, the sweep without
+    the timing, so the caller decides when. What's left is the detector.
   * **Barrier and countdown latch.** Both tiny; the latch is Go's `WaitGroup`,
     which suits the fan-out/fan-in shape protothreads fall into naturally.
 
