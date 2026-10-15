@@ -1788,12 +1788,12 @@ typedef struct {
     pt_timers_t * timers ;
     tmsgq_t * q ;
     tmsg_t msg ;
-} after_context_t ;
+} timeout_context_t ;
 
 static pt_t
-after_thr(env_t const env)
+timeout_thr(env_t const env)
 {
-    after_context_t * const c = env ;
+    timeout_context_t * const c = env ;
     pt_resume(c) ;
     pt_sleep(c, &c->timer_env, c->timers, 10) ;
     pt_queue_send(c, c->q, &c->msg) ;
@@ -1803,7 +1803,7 @@ after_thr(env_t const env)
 typedef struct {
     pt_thread_t pt_thread ;
     pt_func_t pt_func ;
-    after_context_t after ;
+    timeout_context_t timeout ;
     pt_timers_t * timers ;
     tmsgq_t * q ;
     tmsg_t msg ;
@@ -1811,21 +1811,21 @@ typedef struct {
     int round ;
     int result[2] ;
     int stale ;
-} timeout_context_t ;
+} timeout_waiter_context_t ;
 
 static pt_t
 timeout_waiter_thr(env_t const env)
 {
-    timeout_context_t * const c = env ;
+    timeout_waiter_context_t * const c = env ;
     pt_resume(c) ;
     for (c->round = 0; c->round < 2; c->round++) {
         /* start the timer */
-        c->gen++ ;
-        c->after.timers = c->timers ;
-        c->after.q = c->q ;
-        c->after.msg.kind = TO_TIMEOUT ;
-        c->after.msg.gen = c->gen ;
-        pt_create(pt_get_pt(c), &c->after.pt_thread, after_thr, &c->after) ;
+        c->timeout.timers = c->timers ;
+        c->timeout.q = c->q ;
+        c->timeout.msg.kind = TO_TIMEOUT ;
+        c->timeout.msg.gen = ++c->gen ;
+        pt_create(pt_get_pt(c), &c->timeout.pt_thread,
+                  timeout_thr, &c->timeout) ;
 
         /* take the first reply or current timeout, skipping stale ones */
         for (;;) {
@@ -1838,8 +1838,8 @@ timeout_waiter_thr(env_t const env)
 
         /* if the reply won, stop the timer, if it hasn't already fired */
         if (c->msg.kind == TO_REPLY) {
-            (void)pt_timer_cancel(c->timers, &c->after.timer_env) ;
-            (void)pt_kill(&c->after.pt_thread) ;
+            (void)pt_timer_cancel(c->timers, &c->timeout.timer_env) ;
+            (void)pt_kill(&c->timeout.pt_thread) ;
         }
         c->result[c->round] = c->msg.kind ;
     }
@@ -1853,7 +1853,7 @@ test_queue_timeout(void)
     pt_timers_t timers ;
     tmsg_t slots[4] ;
     tmsgq_t q ;
-    timeout_context_t w ;
+    timeout_waiter_context_t w ;
     tmsg_t reply ;
 
     reply.kind = TO_REPLY ;

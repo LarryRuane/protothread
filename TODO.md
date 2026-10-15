@@ -5,7 +5,7 @@ Ideas and deferred work, roughly in order of how much they would be worth.
 ## C++ support ##
 
 Many embedded projects are C++ now, and the payoff would be large: a protothread
-that can use `std::vector`, `std::map`, `std::string` and the rest of the
+that can use `std::vector`, `std::map`, `std::string`, and the rest of the
 non-allocating-until-you-ask standard library is a much more comfortable place to
 write a state machine.
 
@@ -15,7 +15,7 @@ Investigated; it is closer than expected. With `g++ 15 -std=c++17 -Wall -Wextra`
     (IAR and ARMCC still do not support it, in C or C++.)
   * **All four headers already compile as C++** with no errors.
   * A protothread whose context structure contains a `std::vector` and a
-    `std::map` compiles, runs and produces correct results today.
+    `std::map` compiles, runs, and produces correct results today.
 
 Two things to fix or document:
 
@@ -61,7 +61,7 @@ destroy the context -- which is why `pt_set_atexit()` was removed rather than
 kept as a hook for this.
 
 Note that for a *hosted* C++ codebase, C\+\+20 coroutines already provide
-suspendable functions with working locals, RAII and exceptions, at the cost of a
+suspendable functions with working locals, RAII, and exceptions, at the cost of a
 heap-allocated frame. Protothreads win where that frame is unaffordable. The
 port is most valuable for C++ on microcontrollers, which is where the memory
 argument actually bites.
@@ -120,6 +120,12 @@ Timers are done (`protothread_timer.h`). Remaining, most useful first:
     quietly recovers every 100 ms has buried the same defect. That is an
     argument for building the detector first and the recovery second, and for
     the log line naming the wait site rather than counting sweeps.
+
+    Next step: `pt_broadcast_all(s)`, which makes every waiter on every
+    channel ready. It's the sweep without the timing, so the caller decides
+    when (every N ticks of its own clock) and no channel needs to be known.
+    The end of the README's "Wait channels" section suggests doing this and
+    should point at it once it exists.
   * **Barrier and countdown latch.** Both tiny; the latch is Go's `WaitGroup`,
     which suits the fan-out/fan-in shape protothreads fall into naturally.
 
@@ -128,7 +134,7 @@ handle preemption or true parallelism, and this scheduler has neither.
 
 ## Deadlock and quiescence detector ##
 
-Under `PT_DEBUG`, every `pt_func_t` already records `__FILE__`, `__LINE__` and
+Under `PT_DEBUG`, every `pt_func_t` already records `__FILE__`, `__LINE__`, and
 `__FUNCTION__`, chained through `next` -- which is what the `ptbt` gdb macro
 walks. So the program can print a symbolic backtrace of every blocked
 protothread without a debugger attached.
@@ -176,7 +182,7 @@ debugging into a one-line call, and costs nothing in a production build.
     and clang emit `memcpy` and `memset` at `-O0` (none at `-O1` and above). That
     breaks the zero-libc-symbols guarantee in exactly the build someone debugging
     on bare metal would use. `-ffreestanding` does not prevent it: the standard
-    permits a compiler to emit calls to `memcpy`, `memset`, `memmove` and
+    permits a compiler to emit calls to `memcpy`, `memset`, `memmove`, and
     `memcmp` even in freestanding mode, which is why that property has to be
     tested rather than assumed. The CI freestanding job loops `-O0` through
     `-Os`, so it would catch a regression -- the `-O0` in that list is
@@ -193,7 +199,7 @@ debugging into a one-line call, and costs nothing in a production build.
     deadline, a typical insert walks the whole list: O(N) masked time with N
     sleepers, and `pt_timer_cancel()` is the same. A binary heap bounds both at
     O(log N). It needn't be array-based, which would mean a caller-supplied
-    array and a hard limit on sleepers. Put left, right and parent pointers in
+    array and a hard limit on sleepers. Put left, right, and parent pointers in
     `pt_timer_env_t` in place of `next`, keep a root and a count in
     `pt_timers_t`, and the bits of the count give the path to the next free
     position. No API change. Costs two more pointers per sleeper and maybe
