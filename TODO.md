@@ -211,6 +211,18 @@ debugging into a one-line call, and costs nothing in a production build.
     new array has to happen with interrupts masked if `pt_timer_run()` is
     called from an interrupt handler.
     Each env would also store its index in the array, so cancel can find it.
+  * **Grow the wait table.** With many more waiters than `PT_NWAIT` buckets,
+    each wakeup walks a long list (67 us per handoff at 1M waiters and 1024
+    buckets, 117 ns at 2^20). Without `PT_NO_MALLOC`, `protothread_t` could
+    hold a pointer and a mask, starting at the inline array, and `pt_wait()`
+    could double the table when waiters pass twice the bucket count. A
+    failed malloc keeps the old table. Rehash oldest-first to keep per-channel
+    FIFO order. The rehash is O(N) with interrupts masked, so turn growth off
+    when `PT_CRITICAL_*` is defined. Grow only tables from
+    `protothread_create()`, so `protothread_free()` can free them. The hash
+    takes the middle bits, which caps the table at 2^16 on 32-bit. No API
+    change. Not urgent, since 100k waiters still take under 1 us per wakeup at
+    the default size.
   * **Killing a sleeping protothread** leaves a dangling entry on the timer list
     unless `pt_timer_cancel()` is called first; same hazard the reader-writer
     lock has. Documented; a generated typed kill (see type-safe top-level
