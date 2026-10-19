@@ -3,7 +3,7 @@
 [![CI](https://github.com/LarryRuane/protothread/actions/workflows/ci.yml/badge.svg)](https://github.com/LarryRuane/protothread/actions/workflows/ci.yml)
 
 
-[Protothreads](http://en.wikipedia.org/wiki/Protothreads) is a programming model invented by Adam Dunkels that combines the advantages of _event-driven_ (sometimes also called _state machine_) programming and _threaded_ programming. The trick underneath, jumping back into the middle of a function, goes back to [Duff's device](https://en.wikipedia.org/wiki/Duff%27s_device) (1983), Tom Duff's `switch` that jumps into the middle of a loop. Simon Tatham turned it into [coroutines in C](https://www.chiark.greenend.org.uk/~sgtatham/coroutines.html), and Dunkels built protothreads on that. The main advantage of the event-driven model is efficiency, both speed and memory usage. The main advantage of the threaded model is [algorithm clarity](http://dunkels.com/adam/dunkels06protothreads.pdf). Protothreads gives you both. A protothread is a lightweight thread. As with event-driven programming, there is a single stack, shared by every protothread. But as with threaded programming, a function can (at least conceptually) block. (This is why protothreads are called "stackless". There is a stack, but no thread has one of its own.) This protothreads implementation:
+[Protothreads](http://en.wikipedia.org/wiki/Protothreads) is a programming model invented by [Adam Dunkels](https://dunkels.com/adam/pt/) that combines the advantages of _event-driven_ (sometimes also called _state machine_) programming and _threaded_ programming. The trick underneath, jumping back into the middle of a function, goes back to [Duff's device](https://en.wikipedia.org/wiki/Duff%27s_device) (1983), Tom Duff's `switch` that jumps into the middle of a loop. Simon Tatham turned it into [coroutines in C](https://www.chiark.greenend.org.uk/~sgtatham/coroutines.html), and Dunkels built protothreads on that. The main advantage of the event-driven model is efficiency, both speed and memory usage. The main advantage of the threaded model is algorithm clarity. Protothreads gives you both. A protothread is a lightweight thread. As with event-driven programming, there is a single stack, shared by every protothread. But as with threaded programming, a function can (at least conceptually) block. (This is why protothreads are called "stackless". There is a stack, but no thread has one of its own.) This protothreads implementation:
   * is not an implementation of POSIX threads, and isn't compatible with other versions of protothreads
   * does not require assembly-language code or use setjmp/longjmp
   * is independent of CPU architecture
@@ -17,11 +17,10 @@ If protothreads never run two things at once, why threads at all? Because runnin
 
 I wrote this from scratch, and it is not compatible with other versions of protothreads. I came to it from a Unix kernel background. Dunkels' idea is brilliant, but I wanted a programming interface that felt more like the threaded code I was used to. These are the main differences:
 
-  * **Blocking functions nest with an ordinary call.** A protothread function can `pt_call()` another protothread function, passing it arguments, and the one it calls can block. This works to any depth, so you can factor blocking code into subroutines the way you would anywhere else. Dunkels' library nests too, with `PT_SPAWN()`. What differs is how a blocked thread gets resumed, the third point below.
+  * **A real scheduler, with _wait channels_.** `pt_wait()`/`pt_signal()`/`pt_broadcast()` on an arbitrary address deliberately mirror condition variables (`pthread_cond_wait()`, except a `pthread_cond_t` variable isn't needed) and the classic Unix kernel [`sleep()`/`wakeup()`](https://www.ques10.com/p/47397/sleep-event-and-addresses-in-unix-memory-managem-1/). Each thread is on either the run list or a wait list, and a blocked thread does not run until its channel is signaled. So it takes no CPU time, however long it waits. Dunkels' library has no list of threads. The application's main loop calls each one in turn, so in effect every thread is always on one run list, blocked or not, and re-tests its condition each time it's called. Both libraries let blocking functions nest, with `pt_call()` here and `PT_SPAWN()` in Dunkels'. Here a blocked chain of calls is re-entered only once its channel is signaled. Semaphores, reader-writer locks, timers, and message queues are built on top of it, in optional headers of their own.
   * **You can block anywhere**, including inside a `switch` statement. Implementations built on Duff's device cannot, because they're already using `switch`.
-  * **A real scheduler, with _wait channels_.** `pt_wait()`/`pt_signal()`/`pt_broadcast()` on an arbitrary address deliberately mirror condition variables (`pthread_cond_wait()`, except a `pthread_cond_t` variable isn't needed) and the classic Unix kernel [`sleep()`/`wakeup()`](https://www.ques10.com/p/47397/sleep-event-and-addresses-in-unix-memory-managem-1/). Each thread is on either the run list or a wait list, and a blocked thread does not run until its channel is signaled. Dunkels' library leaves scheduling to the application. A blocked protothread is simply called again later, and re-tests its condition each time, re-running every level of any nesting to get there. Semaphores, reader-writer locks, timers, and message queues are built on top of it, in optional headers of their own.
 
-Nesting and arbitrary blocking require [gcc label variables](http://gcc.gnu.org/onlinedocs/gcc/Labels-as-Values.html), which aren't standard C, restricting the compiler to **gcc or clang** (see [Compiler requirements](#compiler-requirements)). Dunkels' `switch`-based version is portable to any C compiler.
+Allowing blocking within a `switch` requires [gcc label variables](http://gcc.gnu.org/onlinedocs/gcc/Labels-as-Values.html), which aren't standard C, restricting the compiler to **gcc or clang** (see [Compiler requirements](#compiler-requirements)). Dunkels' `switch`-based version is portable to any C compiler.
 
 ### What you get ###
 
@@ -571,9 +570,11 @@ You can reason about the second in the same way as the first. That is also why t
 
 It's okay for multiple conditions to map to the same channel, as in producer/consumer. But we could signal one channel when the mailbox becomes full, and a separate channel when the mailbox becomes empty. We could even use `c->mailbox + 1` for this additional channel, since this address isn't dereferenced (although this would look strange).
 
+`pt_wait()` takes no condition, unlike Dunkels' `PT_WAIT_UNTIL()`. A wait doesn't have to sit in a loop around one expression. It can be deep inside nested `if` and `while` statements, and after it wakes, the code can go back to the top of the function and re-evaluate everything. I wrote kernel code in UTS that way, because the condition being waited for was the whole chain of tests rather than one expression. (`pt_wait_until()` takes a condition, for the interrupt case.)
+
 **Use `pt_broadcast()` by default.** It's what the Unix kernel's `wakeup()` always did, and with the `while` loops above it's always correct. Every waiter re-tests, those that can proceed do, and the rest go back to sleep. `pt_signal()`, which wakes only the oldest waiter, is an optimization with conditions attached, and they're easy to break. It's safe only when three things hold. Every waiter on the channel waits for the same condition. The woken waiter is certain to run (it can't be `pt_kill()`ed). And that waiter, on every path, either leaves the condition false or, if it leaves it true, signals again to pass the wakeup on. Those are properties of the whole program, not of the line where `pt_signal()` is called. So a signal that's correct today can become a hang when someone later adds a different kind of waiter to the same channel.
 
-Broadcasting wakes waiters that then go back to sleep, in proportion to how many are waiting on the one channel. On a microcontroller, with protothreads numbering in the tens and seldom more than a few sharing a channel, that's negligible. Where it does matter, consider splitting the channel (making it finer-grained). A channel is only an address, so each condition can have its own, `&s->a` and `&s->b` rather than `&s`. When a channel has exactly one waiter, signal and broadcast do the same thing. This library's lock, timers, and queues split their channels this way.
+Broadcasting wakes waiters that then go back to sleep, in proportion to how many are waiting on the one channel. When only a few share a channel, which is the usual case, that's negligible. Where it does matter, consider splitting the channel (making it finer-grained). A channel is only an address, so each condition can have its own, `&s->a` and `&s->b` rather than `&s`. When a channel has exactly one waiter, signal and broadcast do the same thing. This library's lock, timers, and queues split their channels this way.
 
 The debug (testing) define `PT_SIGNAL_WAKES_ALL` checks the other direction. If set to `1`, every `pt_signal()` wakes everyone. Correct code still works, more slowly. This library's test suite and demos enable that in CI, and its own semaphores, locks, timers, and queues don't call `pt_signal()` at all.
 
@@ -643,7 +644,7 @@ But blocking is often *fine*. If the call is rare and short, like reading a conf
 
 ## Memory overhead and performance (benchmarks) ##
 
-The best-known implementation of protothreads (by Adam Dunkels) uses just two bytes per protothread. This implementation is not quite so parsimonious, mainly because it includes a scheduler. Threads are on either the wait or the run list, and that costs pointers. In exchange you get nesting, wait channels, and synchronization primitives.
+The best-known implementation of protothreads (by Adam Dunkels) uses just two bytes per protothread. This implementation is not quite so parsimonious, mainly because it includes a scheduler. Threads are on either the wait or the run list, and that costs pointers. In exchange you get wait channels, so a blocked thread isn't run until it's woken.
 
 Each protothread function context has a `pt_func_t` structure, which is 2 pointers. Each overall protothread requires a `pt_thread_t` structure, which is 5 pointers. Measured with `PT_DEBUG=0`:
 
@@ -736,7 +737,7 @@ All configuration is by preprocessor macro. Because the library is header-only, 
 
 > `PT_NWAIT` (default `1024`)
 >
-> Number of wait queues, a power of 2. Waiting threads are hashed onto this table by channel address. Each entry is one pointer, so the default costs 8 kB per `protothread_t` on a 64-bit machine. **Set `PT_NWAIT=1` on a memory-constrained system.** With only a handful of waiters, one linear wait list is both smaller and faster than hashing.
+> Number of wait queues, a power of 2. Waiting threads are hashed onto this table by channel address. Each entry is one pointer, so the default costs 8 kB per `protothread_t` on a 64-bit machine. **Set `PT_NWAIT=1` on a memory-constrained system.** With only a handful of waiters, one linear wait list is both smaller and faster than hashing. A wakeup searches the whole list its channel hashes to, so it slows down when waiters far outnumber wait queues. For a large number of protothreads, raise `PT_NWAIT` to about the number waiting at once.
 
 > `PT_NO_MALLOC`
 >
@@ -967,7 +968,7 @@ The one exception is `FindPROTOTHREAD.cmake`, which is third-party code by Ryan 
 
 Lawrence M. Ruane, [Process Synchronization in the UTS Kernel](https://static.usenix.org/publications/compsystems/1990/sum_ruane.pdf), Computing Systems 3(3), Summer 1990, pp. 387-421. Background for the wait-channel design, broadcast wakeups, and semaphore convoys.
 
-I wish to gratefully acknowledge Adam Dunkels (with support from Oliver Schmidt) for inventing this brilliant idea. Please see his [web site](http://dunkels.com/adam/pt/).
+I wish to gratefully acknowledge Adam Dunkels (with support from Oliver Schmidt) for inventing this brilliant idea. Please see his [web site](https://dunkels.com/adam/pt/).
 
 My thanks to Paul Soulier for introducing me to the concept of protothreads, and to Marshall McMullen and John Rockenfeller for reviewing drafts of this article.
 
