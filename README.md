@@ -3,7 +3,7 @@
 [![CI](https://github.com/LarryRuane/protothread/actions/workflows/ci.yml/badge.svg)](https://github.com/LarryRuane/protothread/actions/workflows/ci.yml)
 
 
-[Protothreads](http://en.wikipedia.org/wiki/Protothreads) is a programming model invented by Adam Dunkels that combines the advantages of _event-driven_ (sometimes also called _state machine_) programming and _threaded_ programming. The trick underneath, jumping back into the middle of a function, goes back to [Duff's device](https://en.wikipedia.org/wiki/Duff%27s_device) (1983), Tom Duff's `switch` that jumps into the middle of a loop. Simon Tatham turned it into [coroutines in C](https://www.chiark.greenend.org.uk/~sgtatham/coroutines.html), and Dunkels built protothreads on that. The main advantage of the event-driven model is efficiency, both speed and memory usage. The main advantage of the threaded model is [algorithm clarity](http://dunkels.com/adam/dunkels06protothreads.pdf). Protothreads gives you both. A protothread is a lightweight thread. As with event-driven programming, there is a single stack, shared by every protothread. But as with threaded programming, a function can (at least conceptually) block. (This is why protothreads are called "stackless". There is a stack, but no thread has one of its own.) This protothreads implementation:
+[Protothreads](http://en.wikipedia.org/wiki/Protothreads) is a programming model invented by [Adam Dunkels](https://dunkels.com/adam/pt/) that combines the advantages of _event-driven_ (sometimes also called _state machine_) programming and _threaded_ programming. The trick underneath, jumping back into the middle of a function, goes back to [Duff's device](https://en.wikipedia.org/wiki/Duff%27s_device) (1983), Tom Duff's `switch` that jumps into the middle of a loop. Simon Tatham turned it into [coroutines in C](https://www.chiark.greenend.org.uk/~sgtatham/coroutines.html), and Dunkels built protothreads on that. The main advantage of the event-driven model is efficiency, both speed and memory usage. The main advantage of the threaded model is algorithm clarity. Protothreads gives you both. A protothread is a lightweight thread. As with event-driven programming, there is a single stack, shared by every protothread. But as with threaded programming, a function can (at least conceptually) block. (This is why protothreads are called "stackless". There is a stack, but no thread has one of its own.) This protothreads implementation:
   * is not an implementation of POSIX threads, and isn't compatible with other versions of protothreads
   * does not require assembly-language code or use setjmp/longjmp
   * is independent of CPU architecture
@@ -573,7 +573,7 @@ It's okay for multiple conditions to map to the same channel, as in producer/con
 
 **Use `pt_broadcast()` by default.** It's what the Unix kernel's `wakeup()` always did, and with the `while` loops above it's always correct. Every waiter re-tests, those that can proceed do, and the rest go back to sleep. `pt_signal()`, which wakes only the oldest waiter, is an optimization with conditions attached, and they're easy to break. It's safe only when three things hold. Every waiter on the channel waits for the same condition. The woken waiter is certain to run (it can't be `pt_kill()`ed). And that waiter, on every path, either leaves the condition false or, if it leaves it true, signals again to pass the wakeup on. Those are properties of the whole program, not of the line where `pt_signal()` is called. So a signal that's correct today can become a hang when someone later adds a different kind of waiter to the same channel.
 
-Broadcasting wakes waiters that then go back to sleep, in proportion to how many are waiting on the one channel. On a microcontroller, with protothreads numbering in the tens and seldom more than a few sharing a channel, that's negligible. Where it does matter, consider splitting the channel (making it finer-grained). A channel is only an address, so each condition can have its own, `&s->a` and `&s->b` rather than `&s`. When a channel has exactly one waiter, signal and broadcast do the same thing. This library's lock, timers, and queues split their channels this way.
+Broadcasting wakes waiters that then go back to sleep, in proportion to how many are waiting on the one channel. When only a few share a channel, which is the usual case, that's negligible. Where it does matter, consider splitting the channel (making it finer-grained). A channel is only an address, so each condition can have its own, `&s->a` and `&s->b` rather than `&s`. When a channel has exactly one waiter, signal and broadcast do the same thing. This library's lock, timers, and queues split their channels this way.
 
 The debug (testing) define `PT_SIGNAL_WAKES_ALL` checks the other direction. If set to `1`, every `pt_signal()` wakes everyone. Correct code still works, more slowly. This library's test suite and demos enable that in CI, and its own semaphores, locks, timers, and queues don't call `pt_signal()` at all.
 
@@ -736,7 +736,7 @@ All configuration is by preprocessor macro. Because the library is header-only, 
 
 > `PT_NWAIT` (default `1024`)
 >
-> Number of wait queues, a power of 2. Waiting threads are hashed onto this table by channel address. Each entry is one pointer, so the default costs 8 kB per `protothread_t` on a 64-bit machine. **Set `PT_NWAIT=1` on a memory-constrained system.** With only a handful of waiters, one linear wait list is both smaller and faster than hashing.
+> Number of wait queues, a power of 2. Waiting threads are hashed onto this table by channel address. Each entry is one pointer, so the default costs 8 kB per `protothread_t` on a 64-bit machine. **Set `PT_NWAIT=1` on a memory-constrained system.** With only a handful of waiters, one linear wait list is both smaller and faster than hashing. A wakeup searches the whole list its channel hashes to, so it slows down when waiters far outnumber wait queues. For a large number of protothreads, raise `PT_NWAIT` to about the number waiting at once.
 
 > `PT_NO_MALLOC`
 >
@@ -967,7 +967,7 @@ The one exception is `FindPROTOTHREAD.cmake`, which is third-party code by Ryan 
 
 Lawrence M. Ruane, [Process Synchronization in the UTS Kernel](https://static.usenix.org/publications/compsystems/1990/sum_ruane.pdf), Computing Systems 3(3), Summer 1990, pp. 387-421. Background for the wait-channel design, broadcast wakeups, and semaphore convoys.
 
-I wish to gratefully acknowledge Adam Dunkels (with support from Oliver Schmidt) for inventing this brilliant idea. Please see his [web site](http://dunkels.com/adam/pt/).
+I wish to gratefully acknowledge Adam Dunkels (with support from Oliver Schmidt) for inventing this brilliant idea. Please see his [web site](https://dunkels.com/adam/pt/).
 
 My thanks to Paul Soulier for introducing me to the concept of protothreads, and to Marshall McMullen and John Rockenfeller for reviewing drafts of this article.
 
