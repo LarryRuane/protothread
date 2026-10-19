@@ -1398,6 +1398,8 @@ test_join(void)
     protothread_free(pt) ;
 }
 
+/* version ********************************************************************/
+
 static void
 test_version(void)
 {
