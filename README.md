@@ -17,11 +17,10 @@ If protothreads never run two things at once, why threads at all? Because runnin
 
 I wrote this from scratch, and it is not compatible with other versions of protothreads. I came to it from a Unix kernel background. Dunkels' idea is brilliant, but I wanted a programming interface that felt more like the threaded code I was used to. These are the main differences:
 
-  * **A real scheduler, with _wait channels_.** `pt_wait()`/`pt_signal()`/`pt_broadcast()` on an arbitrary address deliberately mirror condition variables (`pthread_cond_wait()`, except a `pthread_cond_t` variable isn't needed) and the classic Unix kernel [`sleep()`/`wakeup()`](https://www.ques10.com/p/47397/sleep-event-and-addresses-in-unix-memory-managem-1/). Each thread is on either the run list or a wait list, and a blocked thread does not run until its channel is signaled. So it takes no CPU time, however long it waits. Dunkels' library leaves scheduling to the application. A blocked protothread is simply called again later, and re-tests its condition each time, re-running every level of any nesting to get there. Semaphores, reader-writer locks, timers, and message queues are built on top of it, in optional headers of their own.
-  * **Blocking functions nest with an ordinary call.** A protothread function can `pt_call()` another protothread function, passing it arguments, and the one it calls can block. This works to any depth, so you can factor blocking code into subroutines the way you would anywhere else. Dunkels' library nests too, with `PT_SPAWN()`. What differs is how a blocked thread gets resumed, the point above.
+  * **A real scheduler, with _wait channels_.** `pt_wait()`/`pt_signal()`/`pt_broadcast()` on an arbitrary address deliberately mirror condition variables (`pthread_cond_wait()`, except a `pthread_cond_t` variable isn't needed) and the classic Unix kernel [`sleep()`/`wakeup()`](https://www.ques10.com/p/47397/sleep-event-and-addresses-in-unix-memory-managem-1/). Each thread is on either the run list or a wait list, and a blocked thread does not run until its channel is signaled. So it takes no CPU time, however long it waits. Dunkels' library leaves scheduling to the application. A blocked protothread is simply called again later, and re-tests its condition each time, re-running every level of any nesting to get there. Both libraries let blocking functions nest, with `pt_call()` here and `PT_SPAWN()` in Dunkels'. Here a blocked chain of calls is re-entered only once its channel is signaled. Semaphores, reader-writer locks, timers, and message queues are built on top of it, in optional headers of their own.
   * **You can block anywhere**, including inside a `switch` statement. Implementations built on Duff's device cannot, because they're already using `switch`.
 
-Nesting and arbitrary blocking require [gcc label variables](http://gcc.gnu.org/onlinedocs/gcc/Labels-as-Values.html), which aren't standard C, restricting the compiler to **gcc or clang** (see [Compiler requirements](#compiler-requirements)). Dunkels' `switch`-based version is portable to any C compiler.
+Allowing blocking within a `switch` requires [gcc label variables](http://gcc.gnu.org/onlinedocs/gcc/Labels-as-Values.html), which aren't standard C, restricting the compiler to **gcc or clang** (see [Compiler requirements](#compiler-requirements)). Dunkels' `switch`-based version is portable to any C compiler.
 
 ### What you get ###
 
@@ -643,7 +642,7 @@ But blocking is often *fine*. If the call is rare and short, like reading a conf
 
 ## Memory overhead and performance (benchmarks) ##
 
-The best-known implementation of protothreads (by Adam Dunkels) uses just two bytes per protothread. This implementation is not quite so parsimonious, mainly because it includes a scheduler. Threads are on either the wait or the run list, and that costs pointers. In exchange you get nesting, wait channels, and synchronization primitives.
+The best-known implementation of protothreads (by Adam Dunkels) uses just two bytes per protothread. This implementation is not quite so parsimonious, mainly because it includes a scheduler. Threads are on either the wait or the run list, and that costs pointers. In exchange you get wait channels, so a blocked thread isn't run until it's woken.
 
 Each protothread function context has a `pt_func_t` structure, which is 2 pointers. Each overall protothread requires a `pt_thread_t` structure, which is 5 pointers. Measured with `PT_DEBUG=0`:
 
