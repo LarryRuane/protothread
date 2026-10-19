@@ -143,8 +143,8 @@ typedef void * env_t ;
  *
  * The critical sections are short and O(1), except that pt_signal(),
  * pt_broadcast() and pt_kill() walk one wait list, pt_broadcast_all() walks
- * each in its own critical section, and pt_sleep() and pt_timer_cancel()
- * walk the timer list.
+ * each in its own critical section, and pt_sleep(), pt_timer_cancel() and
+ * each wakeup in pt_timer_run() are O(log N) in the number of sleepers.
  */
 #ifndef PT_CRITICAL_T
 #define PT_CRITICAL_T int

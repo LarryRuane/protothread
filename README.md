@@ -774,7 +774,7 @@ static inline uint32_t pt_critical_enter(void) {
 #define PT_CRITICAL_EXIT(s) __set_PRIMASK(s)
 ```
 
-The critical sections are short and O(1), except that `pt_signal()`, `pt_broadcast()`, and `pt_kill()` walk one wait list, `pt_broadcast_all()` walks each one in its own critical section, and `pt_sleep()` and `pt_timer_cancel()` walk the timer list. If interrupt latency is critical, keep `PT_NWAIT` large enough that wait lists stay short, or have the interrupt handler set a flag that the main loop turns into a `pt_signal()` at a safe point.
+The critical sections are short and O(1), except that `pt_signal()`, `pt_broadcast()`, and `pt_kill()` walk one wait list, `pt_broadcast_all()` walks each one in its own critical section, and `pt_sleep()`, `pt_timer_cancel()`, and each wakeup in `pt_timer_run()` are O(log N) in the number of sleepers. If interrupt latency is critical, keep `PT_NWAIT` large enough that wait lists stay short, or have the interrupt handler set a flag that the main loop turns into a `pt_signal()` at a safe point.
 
 ## Compiler requirements ##
 
@@ -882,7 +882,7 @@ What matters is overlap, not which thread. Before the scheduler first runs there
 
 > `bool_t pt_kill(pt_thread_t *)`
 >
-> Remove a thread from whatever list it is on, so that it is never scheduled again. Returns TRUE if the thread was found (it is not an error to kill a thread that has already exited). This is dangerous unless the thread was written to expect it. The thread is stopped wherever it happens to be blocked, and any resources it holds (allocated contexts, semaphores, locks) aren't released. Two places it can be blocked need something done first. A sleeping thread must be taken off the timer list with `pt_timer_cancel()`. A thread that might be using a reader-writer lock must be taken out of it with `pt_lock_cancel()`, whether it's queued for the lock or holding it. Otherwise the lock is eventually granted to a thread that never releases it, and every later request waits forever. A thread waiting on a semaphore is safe to kill. Do not call this on the currently running thread. Any cleanup is up to the caller, once this has returned TRUE.
+> Remove a thread from whatever list it is on, so that it is never scheduled again. Returns TRUE if the thread was found (it is not an error to kill a thread that has already exited). This is dangerous unless the thread was written to expect it. The thread is stopped wherever it happens to be blocked, and any resources it holds (allocated contexts, semaphores, locks) aren't released. Two places it can be blocked need something done first. A sleeping thread must be taken out of the timers with `pt_timer_cancel()`. A thread that might be using a reader-writer lock must be taken out of it with `pt_lock_cancel()`, whether it's queued for the lock or holding it. Otherwise the lock is eventually granted to a thread that never releases it, and every later request waits forever. A thread waiting on a semaphore is safe to kill. Do not call this on the currently running thread. Any cleanup is up to the caller, once this has returned TRUE.
 
 ### Protothread system setup and teardown ###
 

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Timers are a binary heap in a fixed array instead of a sorted list. A sleep,
+  a cancel, and each wakeup are now O(log N) with interrupts masked, instead of
+  a walk of every sleeper. `PT_NTIMERS` (default 16) sets the array size, the
+  most protothreads that can sleep at once on one `pt_timers_t`. A sleeper that
+  finds it full waits for a slot. Equal deadlines no longer wake in FIFO order.
+
 ## [2.1.0] - 2026-10-15
 
 ### Added

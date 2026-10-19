@@ -1256,9 +1256,146 @@ test_timer_cancel(void)
     protothread_free(pt) ;
 }
 
+/* Every parent's deadline is no later than its children's, and each env
+ * knows its own slot
+ */
+static void
+check_timer_heap(pt_timers_t const *timers)
+{
+    unsigned int i ;
+
+    check(timers->n <= PT_NTIMERS) ;
+    for (i = 0; i < timers->n; i++) {
+        check(timers->heap[i]->slot == i) ;
+        if (i > 0) {
+            check(!pt_time_after(timers->heap[(i - 1) / 2]->deadline,
+                                 timers->heap[i]->deadline)) ;
+        }
+    }
+}
+
+/* A full heap with some repeated deadlines, with sleepers cancelled from
+ * anywhere in it, still wakes in deadline order
+ */
+static void
+test_timer_heap(unsigned int seed)
+{
+    protothread_t const pt = protothread_create() ;
+    pt_timers_t timers ;
+    timer_context_t c[PT_NTIMERS] ;
+    int order[PT_NTIMERS] ;
+    bool_t cancelled[PT_NTIMERS] ;
+    int nwoke = 0 ;
+    int ncancelled = 0 ;
+    int i ;
+
+    pt_timers_init(&timers, 0) ;
+    for (i = 0; i < PT_NTIMERS; i++) {
+        seed = seed * 1103515245 + 12345 ;
+        c[i].timers = &timers ;
+        c[i].delay = 1 + (seed >> 16) % 50 ;
+        c[i].order = order ;
+        c[i].nwoke = &nwoke ;
+        c[i].id = i ;
+        cancelled[i] = false ;
+        pt_create(pt, &c[i].pt_thread, timer_thr, &c[i]) ;
+        while (protothread_run(pt)) ;
+        check_timer_heap(&timers) ;
+    }
+    check(timers.n == PT_NTIMERS) ;
+
+    for (i = 0; i < PT_NTIMERS; i++) {
+        seed = seed * 1103515245 + 12345 ;
+        if ((seed >> 16) % 3 == 0) {
+            check(pt_timer_cancel(&timers, &c[i].timer_env)) ;
+            check(!pt_timer_cancel(&timers, &c[i].timer_env)) ;
+            check_timer_heap(&timers) ;
+            cancelled[i] = true ;
+            ncancelled++ ;
+        }
+    }
+
+    for (i = 1; i <= 50; i++) {
+        pt_timer_run(pt, &timers, i) ;
+        check_timer_heap(&timers) ;
+        while (protothread_run(pt)) ;
+    }
+    check(nwoke == PT_NTIMERS - ncancelled) ;
+    for (i = 0; i < nwoke; i++) {
+        check(!cancelled[order[i]]) ;
+        if (i > 0) {
+            check(c[order[i - 1]].delay <= c[order[i]].delay) ;
+        }
+    }
+    for (i = 0; i < PT_NTIMERS; i++) {
+        if (cancelled[i]) {
+            check(pt_kill(&c[i].pt_thread)) ;
+        }
+    }
+    protothread_free(pt) ;
+}
+
+/* With every slot in use, a sleeper waits for one, and its sleep starts
+ * once it gets one. A cancel frees a slot at the next pt_timer_run().
+ */
+static void
+test_timer_full(void)
+{
+    enum { N = PT_NTIMERS + 3 } ;
+    protothread_t const pt = protothread_create() ;
+    pt_timers_t timers ;
+    timer_context_t c[N] ;
+    int order[N] ;
+    int nwoke = 0 ;
+    int i ;
+
+    pt_timers_init(&timers, 0) ;
+    for (i = 0; i < N; i++) {
+        c[i].timers = &timers ;
+        c[i].delay = 10 ;
+        c[i].order = order ;
+        c[i].nwoke = &nwoke ;
+        c[i].id = i ;
+        pt_create(pt, &c[i].pt_thread, timer_thr, &c[i]) ;
+    }
+    while (protothread_run(pt)) ;
+    check(timers.n == PT_NTIMERS) ;
+
+    /* the freed slot isn't handed on until the next run */
+    check(pt_timer_cancel(&timers, &c[0].timer_env)) ;
+    check(timers.n == PT_NTIMERS - 1) ;
+    while (protothread_run(pt)) ;
+    check(timers.n == PT_NTIMERS - 1) ;
+    pt_timer_run(pt, &timers, 1) ;
+    while (protothread_run(pt)) ;
+    check(timers.n == PT_NTIMERS) ;
+    check(nwoke == 0) ;
+
+    /* the first sleepers wake, and the last two start their sleeps at 10 */
+    pt_timer_run(pt, &timers, 10) ;
+    while (protothread_run(pt)) ;
+    check(nwoke == PT_NTIMERS - 1) ;
+    check(timers.n == 3) ;
+    pt_timer_run(pt, &timers, 11) ;
+    while (protothread_run(pt)) ;
+    check(nwoke == PT_NTIMERS) ;
+    pt_timer_run(pt, &timers, 19) ;
+    while (protothread_run(pt)) ;
+    check(nwoke == PT_NTIMERS) ;
+    pt_timer_run(pt, &timers, 20) ;
+    while (protothread_run(pt)) ;
+    check(nwoke == N - 1) ;
+    check(timers.n == 0) ;
+
+    check(pt_kill(&c[0].pt_thread)) ;
+    protothread_free(pt) ;
+}
+
 static void
 test_timer(void)
 {
+    unsigned int i ;
+
     /* ordinary clock, then one that wraps mid-test */
     test_timer_order(0) ;
     test_timer_order(1000) ;
@@ -1266,6 +1403,10 @@ test_timer(void)
     test_timer_order((pt_time_t)-1) ;
     test_timer_jump() ;
     test_timer_cancel() ;
+    for (i = 1; i <= 100; i++) {
+        test_timer_heap(i) ;
+    }
+    test_timer_full() ;
 
     /* the wraparound-safe comparison itself */
     check(pt_time_after(10, 5)) ;
