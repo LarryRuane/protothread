@@ -70,10 +70,9 @@ static void
 test_thread_create(void)
 {
     protothread_t const pt = protothread_create() ;
-    int i ;
     create_context_t * const c = malloc(sizeof(*c)) ;
 
-    for (i = 0; i < 1000; i++) {
+    for (int i = 0; i < 1000; i++) {
         pt_create(pt, &c->pt_thread, create_thr, c) ;
         check(!protothread_run(pt)) ;
     }
@@ -106,7 +105,6 @@ test_yield(void)
 {
     protothread_t const pt = protothread_create() ;
     yield_context_t * const c = malloc(sizeof(*c)) ;
-    int i ;
 
     c->i = -1 ;     /* invalid value */
     pt_create(pt, &c->pt_thread, yield_thr, c) ;
@@ -114,7 +112,7 @@ test_yield(void)
     /* it hasn't run yet at all, make it reach the yield */
     check(protothread_run(pt)) ;        /* it yielded, so it is ready again */
 
-    for (i = 0; i < 10; i++) {
+    for (int i = 0; i < 10; i++) {
         /* make sure the protothread advances its loop */
         check(i == c->i) ;
         /* the last iteration runs it off the end of its loop */
@@ -149,36 +147,34 @@ test_wait(void)
 {
     protothread_t const pt = protothread_create() ;
     wait_context_t * c[10] ;
-    int i ;
-    int j ;
 
-    for (j = 0; j < 10; j++) {
+    for (int j = 0; j < 10; j++) {
         c[j] = malloc(sizeof(*(c[j]))) ;
         c[j]->i = -1 ;
         pt_create(pt, &c[j]->pt_thread, wait_thr, c[j]) ;
     }
 
     /* threads haven't run yet at all, make them reach the wait */
-    for (j = 0; j < 10; j++) {
+    for (int j = 0; j < 10; j++) {
         check(protothread_run(pt) == (j < 9)) ;
     }
 
-    for (i = 0; i < 10; i++) {
-        for (j = 0; j < 10; j++) {
+    for (int i = 0; i < 10; i++) {
+        for (int j = 0; j < 10; j++) {
             check(i == c[j]->i) ;
         }
 
         /* make threads runnable, but do not actually run the threads */
         pt_broadcast(pt, NULL) ;
-        for (j = 0; j < 10; j++) {
+        for (int j = 0; j < 10; j++) {
             check(i == c[j]->i) ;
         }
 
         /* run each thread once */
-        for (j = 0; j < 10; j++) {
+        for (int j = 0; j < 10; j++) {
             check(protothread_run(pt) == (j < 9)) ;
         }
-        for (j = 0; j < 10; j++) {
+        for (int j = 0; j < 10; j++) {
             check(i+1 == c[j]->i) ;
         }
 
@@ -186,12 +182,12 @@ test_wait(void)
         check(!protothread_run(pt)) ;
         pt_broadcast(pt, c[0]) ;
         check(!protothread_run(pt)) ; /* nobody waits on that channel */
-        for (j = 0; j < 10; j++) {
+        for (int j = 0; j < 10; j++) {
             check(i+1 == c[j]->i) ;
         }
     }
 
-    for (j = 0; j < 10; j++) {
+    for (int j = 0; j < 10; j++) {
         free(c[j]) ;
     }
     protothread_free(pt) ;
@@ -379,12 +375,11 @@ test_pc_big(void)
     int mailbox[400] ;
     pc_thread_context_t * const pc = malloc(sizeof(*pc) * 400) ;
     pc_thread_context_t * const cc = malloc(sizeof(*cc) * 400) ;
-    int i ;
 
     /* Start 400 independent pairs of threads, each pair sharing a
      * mailbox.
      */
-    for (i = 0; i < 400; i++) {
+    for (int i = 0; i < 400; i++) {
         mailbox[i] = 0 ;
 
         cc[i].mailbox = &mailbox[i] ;
@@ -523,12 +518,10 @@ test_recursive_once(void)
 static void
 test_recursive(void)
 {
-    int i ;
-
     /* because we're using random numbers, can run this multiple times
      */
     srand(0) ;
-    for (i = 0; i < 10; i++) {
+    for (int i = 0; i < 10; i++) {
         test_recursive_once() ;
     }
 }
@@ -577,14 +570,13 @@ test_sem(void)
     sem_global_context_t * gc = malloc(sizeof(*gc)) ;
     sem_context_t * c[100] ;    /* the test frees these; a protothread may not
                                  * free the context holding its pt_thread_t */
-    int i ;
 
     gc->owner = 0 ;     /* invalid ID (no one in critical section) */
 
     /* for mutual exclusion, init the semaphore count to 1 */
     gc->sem_value = 1 ;
 
-    for (i = 0; i < 100; i++) {
+    for (int i = 0; i < 100; i++) {
         c[i] = malloc(sizeof(*c[i])) ;
         c[i]->gc = gc ;
         c[i]->id = i+1 ;
@@ -594,7 +586,7 @@ test_sem(void)
     /* as long as there is work to do */
     while (protothread_run(pt)) ;
 
-    for (i = 0; i < 100; i++) {
+    for (int i = 0; i < 100; i++) {
         free(c[i]) ;
     }
     free(gc) ;
@@ -696,12 +688,11 @@ static void
 test_lock(void)
 {
     protothread_t const pt = protothread_create() ;
-    int i ;
 
     srand(0) ;
     pt_lock_init(&lock_gc.lock) ;
 
-    for (i = 0; i < LOCK_NTHREADS; i++) {
+    for (int i = 0; i < LOCK_NTHREADS; i++) {
         lock_context_t * c = &lock_r_tc[i] ;
         c->gc = &lock_gc ;
         c->id = i+1 ;
@@ -709,7 +700,7 @@ test_lock(void)
         lock_gc.nthreads ++ ;
     }
 
-    for (i = 0; i < LOCK_NTHREADS; i++) {
+    for (int i = 0; i < LOCK_NTHREADS; i++) {
         lock_context_t * c = &lock_w_tc[i] ;
         c->gc = &lock_gc ;
         c->id = i+1 ;
@@ -912,7 +903,6 @@ test_broadcast_all(void)
 {
     protothread_t const pt = protothread_create() ;
     ball_global_t g ;
-    int i ;
 
     memset(&g, 0, sizeof(g)) ;
     pt_timers_init(&g.timers, 0) ;
@@ -931,7 +921,7 @@ test_broadcast_all(void)
     /* the condition becomes true, but nobody signals */
     g.flag = 1 ;
     protothread_set_ready_function(pt, set_ready, &ready) ;
-    for (i = 0; i < 2; i++) {
+    for (int i = 0; i < 2; i++) {
         pt_broadcast_all(pt) ;
         check(ready) ;          /* notified once, not once per waiter */
         ready = false ;
@@ -1142,11 +1132,10 @@ test_timer_order(pt_time_t base)
     const pt_time_t delay[5] = { 40, 20, 50, 10, 30 } ;
     int order[5] ;
     int nwoke = 0 ;
-    int i ;
     pt_time_t next ;
 
     pt_timers_init(&timers, base) ;
-    for (i = 0; i < 5; i++) {
+    for (int i = 0; i < 5; i++) {
         c[i].timers = &timers ;
         c[i].delay = delay[i] ;
         c[i].order = order ;
@@ -1163,7 +1152,7 @@ test_timer_order(pt_time_t base)
     check(next == (pt_time_t)(base + 10)) ;
 
     /* advance the clock one tick at a time */
-    for (i = 1; i <= 50; i++) {
+    for (int i = 1; i <= 50; i++) {
         pt_timer_run(pt, &timers, base + i) ;
         while (protothread_run(pt)) ;
     }
@@ -1188,10 +1177,9 @@ test_timer_jump(void)
     const pt_time_t delay[3] = { 5, 10, 100 } ;
     int order[3] ;
     int nwoke = 0 ;
-    int i ;
 
     pt_timers_init(&timers, 0) ;
-    for (i = 0; i < 3; i++) {
+    for (int i = 0; i < 3; i++) {
         c[i].timers = &timers ;
         c[i].delay = delay[i] ;
         c[i].order = order ;
@@ -1226,11 +1214,10 @@ test_timer_cancel(void)
     const pt_time_t delay[2] = { 10, 20 } ;
     int order[2] ;
     int nwoke = 0 ;
-    int i ;
     pt_time_t next ;
 
     pt_timers_init(&timers, 0) ;
-    for (i = 0; i < 2; i++) {
+    for (int i = 0; i < 2; i++) {
         c[i].timers = &timers ;
         c[i].delay = delay[i] ;
         c[i].order = order ;
@@ -1262,10 +1249,8 @@ test_timer_cancel(void)
 static void
 check_timer_heap(pt_timers_t const *timers)
 {
-    unsigned int i ;
-
     check(timers->n <= PT_NTIMERS) ;
-    for (i = 0; i < timers->n; i++) {
+    for (unsigned int i = 0; i < timers->n; i++) {
         check(timers->heap[i]->slot == i) ;
         if (i > 0) {
             check(!pt_time_after(timers->heap[(i - 1) / 2]->deadline,
@@ -1287,10 +1272,9 @@ test_timer_heap(unsigned int seed)
     bool_t cancelled[PT_NTIMERS] ;
     int nwoke = 0 ;
     int ncancelled = 0 ;
-    int i ;
 
     pt_timers_init(&timers, 0) ;
-    for (i = 0; i < PT_NTIMERS; i++) {
+    for (int i = 0; i < PT_NTIMERS; i++) {
         seed = seed * 1103515245 + 12345 ;
         c[i].timers = &timers ;
         c[i].delay = 1 + (seed >> 16) % 50 ;
@@ -1304,7 +1288,7 @@ test_timer_heap(unsigned int seed)
     }
     check(timers.n == PT_NTIMERS) ;
 
-    for (i = 0; i < PT_NTIMERS; i++) {
+    for (int i = 0; i < PT_NTIMERS; i++) {
         seed = seed * 1103515245 + 12345 ;
         if ((seed >> 16) % 3 == 0) {
             check(pt_timer_cancel(&timers, &c[i].timer_env)) ;
@@ -1315,19 +1299,19 @@ test_timer_heap(unsigned int seed)
         }
     }
 
-    for (i = 1; i <= 50; i++) {
+    for (int i = 1; i <= 50; i++) {
         pt_timer_run(pt, &timers, i) ;
         check_timer_heap(&timers) ;
         while (protothread_run(pt)) ;
     }
     check(nwoke == PT_NTIMERS - ncancelled) ;
-    for (i = 0; i < nwoke; i++) {
+    for (int i = 0; i < nwoke; i++) {
         check(!cancelled[order[i]]) ;
         if (i > 0) {
             check(c[order[i - 1]].delay <= c[order[i]].delay) ;
         }
     }
-    for (i = 0; i < PT_NTIMERS; i++) {
+    for (int i = 0; i < PT_NTIMERS; i++) {
         if (cancelled[i]) {
             check(pt_kill(&c[i].pt_thread)) ;
         }
@@ -1347,10 +1331,9 @@ test_timer_full(void)
     timer_context_t c[N] ;
     int order[N] ;
     int nwoke = 0 ;
-    int i ;
 
     pt_timers_init(&timers, 0) ;
-    for (i = 0; i < N; i++) {
+    for (int i = 0; i < N; i++) {
         c[i].timers = &timers ;
         c[i].delay = 10 ;
         c[i].order = order ;
@@ -1394,8 +1377,6 @@ test_timer_full(void)
 static void
 test_timer(void)
 {
-    unsigned int i ;
-
     /* ordinary clock, then one that wraps mid-test */
     test_timer_order(0) ;
     test_timer_order(1000) ;
@@ -1403,7 +1384,7 @@ test_timer(void)
     test_timer_order((pt_time_t)-1) ;
     test_timer_jump() ;
     test_timer_cancel() ;
-    for (i = 1; i <= 100; i++) {
+    for (unsigned int i = 1; i <= 100; i++) {
         test_timer_heap(i) ;
     }
     test_timer_full() ;
@@ -1647,17 +1628,16 @@ test_lock_cancel(void)
     lock_cancel_context_t c[3] ;
     lock_cancel_context_t unused ;
     pt_lock_t lock ;
-    int i ;
 
     memset(c, 0, sizeof(c)) ;
     memset(&unused, 0, sizeof(unused)) ;
     pt_lock_init(&lock) ;
-    for (i = 0; i < 3; i++) {
+    for (int i = 0; i < 3; i++) {
         c[i].lock = &lock ;
         pt_create(pt, &c[i].pt_thread, lock_cancel_thr, &c[i]) ;
     }
     /* c[0] holds the lock, c[1] and c[2] are queued behind it */
-    for (i = 0; i < 3; i++) {
+    for (int i = 0; i < 3; i++) {
         (void)protothread_run(pt) ;
     }
     check(c[0].got && !c[1].got && !c[2].got) ;
@@ -1684,7 +1664,7 @@ test_lock_cancel(void)
 
     /* now cancel a holder rather than a waiter: c[0] takes it and is killed */
     memset(c, 0, sizeof(c)) ;
-    for (i = 0; i < 2; i++) {
+    for (int i = 0; i < 2; i++) {
         c[i].lock = &lock ;
         pt_create(pt, &c[i].pt_thread, lock_cancel_thr, &c[i]) ;
     }
@@ -1994,13 +1974,12 @@ test_queue_of_queues(void)
     request_t slots[2] ;
     requestq_t requests ;
     rr_context_t server, client[3] ;
-    int i ;
 
     requestq_init(&requests, slots, 2) ;
     memset(&server, 0, sizeof(server)) ;
     server.requests = &requests ;
     pt_create(pt, &server.pt_thread, rr_server_thr, &server) ;
-    for (i = 0; i < 3; i++) {
+    for (int i = 0; i < 3; i++) {
         memset(&client[i], 0, sizeof(client[i])) ;
         client[i].requests = &requests ;
         client[i].x = i + 2 ;
@@ -2009,7 +1988,7 @@ test_queue_of_queues(void)
     }
     while (protothread_run(pt)) ;
     /* each client got the answer to its own question */
-    for (i = 0; i < 3; i++) {
+    for (int i = 0; i < 3; i++) {
         check(client[i].answer == (i + 2) * (i + 2)) ;
         check(!pt_is_alive(&client[i].pt_thread)) ;
     }
@@ -2324,16 +2303,13 @@ irq_queue_send(void)
 static void
 test_interrupts(void)
 {
-    int k ;
-
     /* the ready function runs unmasked, after every waiter has been moved */
     {
         protothread_t const pt = protothread_create() ;
         irq_context_t w[3] ;
-        int i ;
 
         memset(w, 0, sizeof(w)) ;
-        for (i = 0; i < 3; i++) {
+        for (int i = 0; i < 3; i++) {
             pt_create(pt, &w[i].pt_thread, irq_waiter_thr, &w[i]) ;
         }
         while (protothread_run(pt)) ;
@@ -2347,7 +2323,7 @@ test_interrupts(void)
     }
 
     /* a tick interrupt at any point during pt_sleep() is never lost */
-    for (k = 1; k <= 8; k++) {
+    for (int k = 1; k <= 8; k++) {
         irq_context_t c ;
 
         memset(&c, 0, sizeof(c)) ;
@@ -2366,7 +2342,7 @@ test_interrupts(void)
     }
 
     /* a pt_kill() interrupt at any point during pt_join() is never lost */
-    for (k = 1; k <= 8; k++) {
+    for (int k = 1; k <= 8; k++) {
         irq_context_t j ;
 
         memset(&irq_target, 0, sizeof(irq_target)) ;
@@ -2389,7 +2365,7 @@ test_interrupts(void)
     /* an interrupt that sets a predicate and signals, at any point during
      * pt_wait_until(), is never lost
      */
-    for (k = 1; k <= 8; k++) {
+    for (int k = 1; k <= 8; k++) {
         irq_context_t c ;
 
         memset(&c, 0, sizeof(c)) ;
@@ -2412,7 +2388,7 @@ test_interrupts(void)
     /* an interrupt that sends to a queue, at any point while a protothread
      * is blocking to receive from it, is never lost
      */
-    for (k = 1; k <= 8; k++) {
+    for (int k = 1; k <= 8; k++) {
         irq_context_t c ;
         int slots[2] ;
 
@@ -2436,7 +2412,7 @@ test_interrupts(void)
     /* a selective receiver passing over an unwanted item never misses the
      * one it wants, whenever the interrupt sends it
      */
-    for (k = 1; k <= 8; k++) {
+    for (int k = 1; k <= 8; k++) {
         irq_context_t c ;
         int slots[4] ;
         int const one = 1 ;

@@ -579,12 +579,11 @@ pt_i_get_protothread(pt_func_t const * pt_func) {
 static inline void
 protothread_init(protothread_t const s)
 {
-    int i ;
     s->ready_function = NULL ;
     s->ready_env = NULL ;
     s->running = NULL ;
     s->ready = NULL ;
-    for (i = 0; i < PT_NWAIT; i++) {
+    for (int i = 0; i < PT_NWAIT; i++) {
         s->wait[i] = NULL ;
     }
 }
@@ -594,8 +593,7 @@ protothread_deinit(protothread_t const s)
 {
     (void)s ;
     if (PT_DEBUG) {
-        int i ;
-        for (i = 0; i < PT_NWAIT; i++) {
+        for (int i = 0; i < PT_NWAIT; i++) {
             pt_assert(s->wait[i] == NULL) ;
         }
         pt_assert(s->ready == NULL) ;
@@ -747,9 +745,8 @@ static inline void
 pt_broadcast_all(protothread_t const s)
 {
     bool_t notify = false ;
-    int i ;
 
-    for (i = 0; i < PT_NWAIT; i++) {
+    for (int i = 0; i < PT_NWAIT; i++) {
         pt_thread_t ** const wq = &s->wait[i] ;
         /* only a protothread can add a waiter, so an empty bucket stays so */
         if (*wq == NULL) {
