@@ -27,7 +27,7 @@
 #include "protothread_timer.h"
 #include "protothread_queue.h"
 
-/******************************************************************************/
+/* create_dynamic *************************************************************/
 
 static void
 test_create_dynamic(void)
@@ -37,7 +37,7 @@ test_create_dynamic(void)
     protothread_free(pt) ;
 }
 
-/******************************************************************************/
+/* create_static **************************************************************/
 
 static void
 test_create_static(void)
@@ -49,7 +49,7 @@ test_create_static(void)
     protothread_deinit(pt) ;
 }
 
-/******************************************************************************/
+/* thread_create **************************************************************/
 
 typedef struct create_context_s {
     int i ;
@@ -81,7 +81,7 @@ test_thread_create(void)
     protothread_free(pt) ;
 }
 
-/******************************************************************************/
+/* yield **********************************************************************/
 
 typedef struct yield_context_s {
     pt_func_t pt_func ;
@@ -124,7 +124,7 @@ test_yield(void)
     protothread_free(pt) ;
 }
 
-/******************************************************************************/
+/* wait ***********************************************************************/
 
 typedef struct wait_context_s {
     pt_thread_t pt_thread ;
@@ -197,7 +197,7 @@ test_wait(void)
     protothread_free(pt) ;
 }
 
-/******************************************************************************/
+/* broadcast ******************************************************************/
 
 /* make sure that broadcast wakes up all the threads it should,
  * none of the threads it shouldn't
@@ -283,7 +283,7 @@ test_broadcast(void)
 
 #undef N
 
-/******************************************************************************/
+/* pc *************************************************************************/
 
 /* Producer-comsumer
  *
@@ -406,7 +406,7 @@ test_pc_big(void)
 
 #undef N
 
-/******************************************************************************/
+/* recursive ******************************************************************/
 
 /* count to 4096 the hard way */
 
@@ -533,7 +533,7 @@ test_recursive(void)
     }
 }
 
-/******************************************************************************/
+/* sem ************************************************************************/
 
 typedef struct sem_global_context_s {
     int owner ;             /* zero, or thread who is in the critical section */
@@ -601,7 +601,7 @@ test_sem(void)
     protothread_free(pt) ;
 }
 
-/******************************************************************************/
+/* lock ***********************************************************************/
 
 typedef struct lock_global_context_s {
     pt_lock_t lock ;
@@ -726,7 +726,7 @@ test_lock(void)
 
 #undef LOCK_NTHREADS
 
-/******************************************************************************/
+/* func_pointer ***************************************************************/
 
 typedef struct func_pointer_context_s {
     int i ;
@@ -778,7 +778,7 @@ test_func_pointer(void)
     protothread_free(pt) ;
 }
 
-/******************************************************************************/
+/* ready **********************************************************************/
 
 static bool_t ready ;
 static void
@@ -847,7 +847,7 @@ test_ready(void)
     protothread_free(pt) ;
 }
 
-/******************************************************************************/
+/* broadcast_all **************************************************************/
 
 /* pt_broadcast_all() recovers a lost wakeup, and every other kind of waiter
  * re-tests and goes back to waiting.
@@ -956,7 +956,7 @@ test_broadcast_all(void)
     protothread_free(pt) ;
 }
 
-/******************************************************************************/
+/* kill ***********************************************************************/
 
 typedef struct kill_context_s {
     pt_thread_t pt_thread ;
@@ -1053,7 +1053,7 @@ test_kill(void)
     protothread_free(pt) ;
 }
 
-/******************************************************************************/
+/* reset **********************************************************************/
 
 typedef struct reset_context_s {
     pt_thread_t pt_thread ;
@@ -1103,7 +1103,7 @@ test_reset(void)
 }
 
 
-/******************************************************************************/
+/* timer **********************************************************************/
 
 /* Timers */
 
@@ -1276,9 +1276,7 @@ test_timer(void)
 }
 
 
-/******************************************************************************/
-
-/******************************************************************************/
+/* join ***********************************************************************/
 
 typedef struct join_worker_context_s {
     pt_thread_t pt_thread ;
@@ -1421,7 +1419,7 @@ test_version(void)
     check(!PT_VERSION_AT_LEAST(PT_VERSION_MAJOR + 1, 0, 0)) ;
 }
 
-/******************************************************************************/
+/* same_line ******************************************************************/
 
 /* Several blocking macros on one line, and inside one user macro. With goto
  * labels named after __LINE__, both of these failed to compile.
@@ -1477,7 +1475,7 @@ test_same_line(void)
     protothread_free(pt) ;
 }
 
-/******************************************************************************/
+/* lock_cancel ****************************************************************/
 
 typedef struct {
     pt_thread_t pt_thread ;
@@ -1559,7 +1557,7 @@ test_lock_cancel(void)
     protothread_free(pt) ;
 }
 
-/******************************************************************************/
+/* queue **********************************************************************/
 
 PT_QUEUE_DEFINE(intq, int)
 
@@ -2036,7 +2034,7 @@ test_queue_void(void)
     protothread_free(pt) ;
 }
 
-/******************************************************************************/
+/* interrupts *****************************************************************/
 
 /* Interrupt races. These need the critical-section harness from CI, which
  * counts nesting depth and can fire a fake interrupt handler at the moment
@@ -2321,7 +2319,7 @@ test_interrupts(void)
 
 #endif /* PT_TEST_IRQ */
 
-/******************************************************************************/
+/* main ***********************************************************************/
 
 int
 main()
