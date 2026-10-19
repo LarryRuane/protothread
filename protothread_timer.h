@@ -58,60 +58,140 @@ pt_time_after(pt_time_t a, pt_time_t b)
     return (pt_i_time_diff_t)(a - b) > 0 ;
 }
 
+/* Most protothreads that can sleep at once on one pt_timers_t; a sleeper
+ * that finds them all in use waits for one to free up.
+ */
+#ifndef PT_NTIMERS
+#define PT_NTIMERS 16
+#endif
+#if (PT_NTIMERS) < 1
+#error PT_NTIMERS must be at least 1
+#endif
+
 /* One per sleeping protothread, in its context structure (like pt_func_t) */
 typedef struct pt_timer_env_s {
     pt_func_t pt_func ;
-    struct pt_timer_env_s *next ;  /* deadline-sorted list, soonest first */
     pt_time_t deadline ;
+    unsigned int slot ;             /* index in the heap while pending */
     bool_t expired ;
 } pt_timer_env_t ;
 
 /* One per clock; usually one for the whole system */
 typedef struct pt_timers_s {
-    pt_timer_env_t *head ;          /* soonest deadline, or NULL */
     pt_time_t now ;                 /* time of the last pt_timer_run() */
+    unsigned int n ;                /* sleepers in the heap */
+    bool_t full_wait ;              /* a sleeper is waiting for a slot */
+    pt_timer_env_t *heap[PT_NTIMERS] ;  /* binary min-heap by deadline */
 } pt_timers_t ;
 
 static inline void
 pt_timers_init(pt_timers_t *timers, pt_time_t now)
 {
-    timers->head = NULL ;
     timers->now = now ;
+    timers->n = 0 ;
+    timers->full_wait = false ;
 }
 
-/* insert into the deadline-sorted list, behind any equal deadlines */
+/* The heap helpers below are called with interrupts masked */
+
+static inline void
+pt_i_timer_place(pt_timers_t *timers, unsigned int i, pt_timer_env_t *c)
+{
+    timers->heap[i] = c ;
+    c->slot = i ;
+}
+
+static inline void
+pt_i_timer_sift_up(pt_timers_t *timers, unsigned int i)
+{
+    pt_timer_env_t * const c = timers->heap[i] ;
+
+    while (i > 0) {
+        unsigned int const parent = (i - 1) / 2 ;
+        if (!pt_time_after(timers->heap[parent]->deadline, c->deadline)) {
+            break ;
+        }
+        pt_i_timer_place(timers, i, timers->heap[parent]) ;
+        i = parent ;
+    }
+    pt_i_timer_place(timers, i, c) ;
+}
+
+static inline void
+pt_i_timer_sift_down(pt_timers_t *timers, unsigned int i)
+{
+    pt_timer_env_t * const c = timers->heap[i] ;
+
+    for (;;) {
+        unsigned int child = 2 * i + 1 ;
+        if (child >= timers->n) {
+            break ;
+        }
+        if (child + 1 < timers->n &&
+                pt_time_after(timers->heap[child]->deadline,
+                              timers->heap[child + 1]->deadline)) {
+            child++ ;
+        }
+        if (!pt_time_after(c->deadline, timers->heap[child]->deadline)) {
+            break ;
+        }
+        pt_i_timer_place(timers, i, timers->heap[child]) ;
+        i = child ;
+    }
+    pt_i_timer_place(timers, i, c) ;
+}
+
+static inline void
+pt_i_timer_remove(pt_timers_t *timers, unsigned int i)
+{
+    timers->n-- ;
+    if (i < timers->n) {
+        pt_i_timer_place(timers, i, timers->heap[timers->n]) ;
+        if (i > 0 && pt_time_after(timers->heap[(i - 1) / 2]->deadline,
+                                   timers->heap[i]->deadline)) {
+            pt_i_timer_sift_up(timers, i) ;
+        } else {
+            pt_i_timer_sift_down(timers, i) ;
+        }
+    }
+}
+
+/* the heap is full; tell pt_timer_run() someone is waiting for a slot */
+static inline bool_t
+pt_i_timers_full(pt_timers_t *timers)
+{
+    if (timers->n < PT_NTIMERS) {
+        return false ;
+    }
+    timers->full_wait = true ;
+    return true ;
+}
+
 static inline void
 pt_i_timer_insert(pt_timers_t *timers, pt_timer_env_t *c)
 {
-    pt_timer_env_t **pp = &timers->head ;
     const pt_i_critical_t saved = PT_CRITICAL_ENTER() ;
 
-    while (*pp && !pt_time_after((*pp)->deadline, c->deadline)) {
-        pp = &(*pp)->next ;
-    }
-    c->next = *pp ;
-    *pp = c ;
+    timers->heap[timers->n] = c ;
+    timers->n++ ;
+    pt_i_timer_sift_up(timers, timers->n - 1) ;
     PT_CRITICAL_EXIT(saved) ;
 }
 
-/* Take a sleeper off the list WITHOUT waking it; it stays blocked. Returns
+/* Take a sleeper off the heap WITHOUT waking it; it stays blocked. Returns
  * TRUE if it was still pending. Needed before freeing or pt_kill()ing a
  * protothread that might be sleeping.
  */
 static inline bool_t
 pt_timer_cancel(pt_timers_t *timers, pt_timer_env_t *c)
 {
-    pt_timer_env_t **pp ;
     bool_t found = false ;
     const pt_i_critical_t saved = PT_CRITICAL_ENTER() ;
 
-    for (pp = &timers->head; *pp; pp = &(*pp)->next) {
-        if (*pp == c) {
-            *pp = c->next ;
-            c->next = NULL ;
-            found = true ;
-            break ;
-        }
+    /* c->slot may be stale or never set; the identity check covers both */
+    if (c->slot < timers->n && timers->heap[c->slot] == c) {
+        pt_i_timer_remove(timers, c->slot) ;
+        found = true ;
     }
     PT_CRITICAL_EXIT(saved) ;
     return found ;
@@ -123,23 +203,36 @@ pt_timer_cancel(pt_timers_t *timers, pt_timer_env_t *c)
 static inline void
 pt_timer_run(protothread_t const s, pt_timers_t *timers, pt_time_t now)
 {
+    bool_t slot_free ;
+    pt_i_critical_t saved ;
+
     timers->now = now ;
     for (;;) {
         pt_timer_env_t *c ;
-        const pt_i_critical_t saved = PT_CRITICAL_ENTER() ;
+        saved = PT_CRITICAL_ENTER() ;
 
-        c = timers->head ;
-        if (c == NULL || pt_time_after(c->deadline, now)) {
+        if (timers->n == 0 || pt_time_after(timers->heap[0]->deadline, now)) {
             PT_CRITICAL_EXIT(saved) ;
             break ;
         }
-        timers->head = c->next ;
-        c->next = NULL ;
+        c = timers->heap[0] ;
+        pt_i_timer_remove(timers, 0) ;
         c->expired = true ;
         PT_CRITICAL_EXIT(saved) ;
 
         /* outside the critical section: this walks a wait list */
         pt_broadcast(s, c) ;
+    }
+
+    /* a slot freed by this run or by pt_timer_cancel() */
+    saved = PT_CRITICAL_ENTER() ;
+    slot_free = timers->full_wait && timers->n < PT_NTIMERS ;
+    if (slot_free) {
+        timers->full_wait = false ;
+    }
+    PT_CRITICAL_EXIT(saved) ;
+    if (slot_free) {
+        pt_broadcast(s, &timers->full_wait) ;
     }
 }
 
@@ -152,9 +245,9 @@ pt_timer_next(pt_timers_t const *timers, pt_time_t *deadline)
     bool_t pending ;
     const pt_i_critical_t saved = PT_CRITICAL_ENTER() ;
 
-    pending = (timers->head != NULL) ;
+    pending = (timers->n > 0) ;
     if (pending) {
-        *deadline = timers->head->deadline ;
+        *deadline = timers->heap[0]->deadline ;
     }
     PT_CRITICAL_EXIT(saved) ;
     return pending ;
@@ -164,10 +257,11 @@ static inline pt_t
 pt_i_sleep(pt_timer_env_t *c, pt_timers_t *timers, pt_time_t ticks)
 {
     pt_resume(c) ;
+    /* pt_timer_run() may be called from a tick interrupt */
+    pt_i_wait_while(c, &timers->full_wait, pt_i_timers_full(timers)) ;
     c->expired = false ;
     c->deadline = timers->now + ticks ;
     pt_i_timer_insert(timers, c) ;
-    /* pt_timer_run() may be called from a tick interrupt */
     pt_i_wait_while(c, c, !c->expired) ;
     return PT_DONE ;
 }

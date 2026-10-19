@@ -189,28 +189,6 @@ debugging into a one-line call, and costs nothing in a production build.
     that the releaser is the owner.
   * **`set(CMAKE_C_COMPILER "gcc")`** in CMakeLists hard-forces gcc on every
     platform, though clang works fine. Make it conditional or drop it.
-  * **An intrusive heap for timers.** `pt_i_timer_insert()` walks the sorted
-    list with interrupts masked, and since a new sleep usually has the latest
-    deadline, a typical insert walks the whole list: O(N) masked time with N
-    sleepers, and `pt_timer_cancel()` is the same. A binary heap bounds both at
-    O(log N). It needn't be array-based, which would mean a caller-supplied
-    array and a hard limit on sleepers. Put left, right, and parent pointers in
-    `pt_timer_env_t` in place of `next`, keep a root and a count in
-    `pt_timers_t`, and the bits of the count give the path to the next free
-    position. No API change. Costs two more pointers per sleeper and maybe
-    60-80 lines, and equal deadlines lose FIFO wake order unless a sequence
-    number breaks ties. Worth it only if someone actually has many sleepers.
-
-    The array-based heap is the simpler alternative, and the usual one, but
-    the caller has to know the most sleepers there can ever be and supply an
-    array that size. If the array holds pointers to the `pt_timer_env_t`s
-    rather than the envs themselves, though, it can be grown when it fills,
-    the way a C++ `std::vector` doubles its capacity, since moving pointers
-    doesn't move the sleepers. That needs allocation, so it'd be unavailable
-    under `PT_NO_MALLOC` like `protothread_create()`, and the switch to the
-    new array has to happen with interrupts masked if `pt_timer_run()` is
-    called from an interrupt handler.
-    Each env would also store its index in the array, so cancel can find it.
   * **Grow the wait table.** With many more waiters than `PT_NWAIT` buckets,
     each wakeup walks a long list (67 us per handoff at 1M waiters and 1024
     buckets, 117 ns at 2^20). Without `PT_NO_MALLOC`, `protothread_t` could
@@ -223,7 +201,7 @@ debugging into a one-line call, and costs nothing in a production build.
     takes the middle bits, which caps the table at 2^16 on 32-bit. No API
     change. Not urgent, since 100k waiters still take under 1 us per wakeup at
     the default size.
-  * **Killing a sleeping protothread** leaves a dangling entry on the timer list
+  * **Killing a sleeping protothread** leaves a dangling entry in the timer heap
     unless `pt_timer_cancel()` is called first; same hazard the reader-writer
     lock has. Documented; a generated typed kill (see type-safe top-level
     protothreads, below) could cancel the timer automatically.
