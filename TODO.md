@@ -123,6 +123,14 @@ Timers (`protothread_timer.h`) and message queues (`protothread_queue.h`, in
     the timing, so the caller decides when. What's left is the detector.
   * **Barrier and countdown latch.** Both tiny; the latch is Go's `WaitGroup`,
     which suits the fan-out/fan-in shape protothreads fall into naturally.
+  * **Rendezvous.** Go's unbuffered channel, as its own object rather than a
+    queue of capacity 0 (doc/queue.md says why queues can't be). The item
+    stays in the sender's context, so there's no buffer. The sender posts a
+    pointer and waits until it's taken, and the receiver copies straight from
+    the sender, one copy instead of a queue's two. About 40 lines with a typed
+    `PT_..._DEFINE` wrapper. No `try_send()`, but an interrupt-side
+    `try_receive()` would work. Wait until someone asks, since a capacity-1
+    queue plus a reply covers most uses.
 
 Deliberately *not* worth adding: spinlocks, atomics, RCU, seqlocks. They exist to
 handle preemption or true parallelism, and this scheduler has neither.
