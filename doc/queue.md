@@ -128,3 +128,5 @@ pt_queue_receive(c, &c->replies, &c->answer);
 ```
 
 Send the pointer, never the queue itself. A copy of a queue would be a second queue sharing the first one's storage. The reply queue also has to outlive the request, which it does here because the client waits for its answer.
+
+**No unbuffered queues.** Go's unbuffered channel, with capacity 0, makes a send wait until a receiver takes the item. Here the capacity must be at least 1. A send with nowhere to put its item would have to hand it straight to a waiting receiver, which `try_send()` couldn't do safely from an interrupt handler. And `pt_queue_wait_new()`, `count()`, and `at()` would have nothing to look at. A capacity of 1 comes close, since a second send blocks until the first item is taken. If the sender needs to know its item arrived, have the receiver answer, as in the request and reply above.
