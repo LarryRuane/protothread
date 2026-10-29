@@ -586,7 +586,7 @@ It can also be part of an orderly shutdown process. Set a flag that every wait l
 
 ### Example - a barrier ###
 
-A barrier holds protothreads until `n` of them have arrived, then lets them all go. With `n` of 2 it's a rendezvous. Two protothreads meet, and neither continues until the other gets there. They can exchange data this way, too. Each writes its part before arriving and reads the other's part after.
+A barrier holds protothreads until `n` of them have arrived, then lets them all go. With `n` of 2 it's a rendezvous. Two protothreads meet, and neither continues until the other gets there. They can exchange data this way, too. Each writes its part before arriving and reads the other's part after. If they meet again, alternate between two sets of slots by round. Otherwise one may write its next part before the other has read this one.
 
 ```c
 typedef struct {
