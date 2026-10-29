@@ -121,8 +121,9 @@ Timers (`protothread_timer.h`) and message queues (`protothread_queue.h`, in
 
     The recovery half now exists as `pt_broadcast_all(s)`, the sweep without
     the timing, so the caller decides when. What's left is the detector.
-  * **Barrier and countdown latch.** Both tiny; the latch is Go's `WaitGroup`,
-    which suits the fan-out/fan-in shape protothreads fall into naturally.
+  * **Countdown latch.** Tiny; it's Go's `WaitGroup`, which suits the
+    fan-out/fan-in shape protothreads fall into naturally. (A barrier is shown
+    in README.md, "Example - a barrier".)
   * **Rendezvous.** Go's unbuffered channel, as its own object rather than a
     queue of capacity 0 (doc/queue.md says why queues can't be). The item
     stays in the sender's context, so there's no buffer. The sender posts a
