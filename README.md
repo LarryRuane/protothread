@@ -608,7 +608,9 @@ if (++b->arrived < b->n) {
 }
 ```
 
-The last to arrive opens the barrier and keeps running. The others are now ready, but they won't run until it yields or waits. By then it may have come back around and arrived for the next round. A waiter that tested `arrived` instead of `gen` would see that new round, go back to waiting, and never wake. The generation number changes once per opening, so the waiters can't miss it.
+The waiters test `gen` rather than `arrived`, and here's why. Say `n` is 3. A and B arrive and wait. C arrives last, opens the barrier, and keeps running. A and B are now ready, but they won't run until C yields or waits. Before then, C may come back around and arrive for the next round, and so may D. Now `arrived` is 2. If A and B tested `arrived`, they'd see a round in progress, go back to waiting, and could wait forever. Instead they find that `gen` has changed since they arrived, and they go on, which is correct.
+
+`gen` is only compared for equality, so it's fine for it to wrap around. It would have to advance 2^32 times before A and B run, and it can't. The run list is first-in, first-out, so A and B run ahead of any thread readied after them.
 
 ## Deterministic execution ##
 
