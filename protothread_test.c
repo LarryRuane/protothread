@@ -401,6 +401,132 @@ test_pc_big(void)
 
 #undef N
 
+/* barrier ********************************************************************/
+
+/* The barrier from README.md, as a nested protothread function. With n of 2
+ * it's a rendezvous.
+ */
+typedef struct {
+    int n ;                 /* how many must arrive */
+    int arrived ;
+    unsigned int gen ;      /* incremented each time it opens */
+} barrier_t ;
+
+typedef struct barrier_arrive_context_s {
+    pt_func_t pt_func ;
+    unsigned int gen ;
+} barrier_arrive_context_t ;
+
+static pt_t
+barrier_arrive(barrier_arrive_context_t * const c, barrier_t * const b)
+{
+    pt_resume(c) ;
+
+    if (++b->arrived < b->n) {
+        c->gen = b->gen ;
+        while (b->gen == c->gen) {
+            pt_wait(c, &b->gen) ;
+        }
+    } else {
+        b->arrived = 0 ;
+        b->gen++ ;
+        pt_broadcast(pt_get_pt(c), &b->gen) ;
+    }
+    return PT_DONE ;
+}
+
+#define BARRIER_N 3
+#define BARRIER_ROUNDS 5
+
+typedef struct barrier_context_s {
+    pt_thread_t pt_thread ;
+    pt_func_t pt_func ;
+    barrier_arrive_context_t arrive ;
+    barrier_t * b ;
+    int * round ;           /* every thread's current round */
+    int id ;
+    int r ;
+    int i ;
+} barrier_context_t ;
+
+static pt_t
+barrier_thr(env_t const env)
+{
+    barrier_context_t * const c = env ;
+    pt_resume(c) ;
+
+    for (c->r = 0; c->r < BARRIER_ROUNDS; c->r++) {
+        c->round[c->id] = c->r ;
+        /* stagger, so the last to arrive differs from round to round */
+        for (c->i = 0; c->i < (c->id + c->r) % BARRIER_N; c->i++) {
+            pt_yield(c) ;
+        }
+        pt_call(c, barrier_arrive, &c->arrive, c->b) ;
+        /* everyone has reached this round, and nobody is past the next */
+        for (int i = 0; i < BARRIER_N; i++) {
+            check(c->round[i] == c->r || c->round[i] == c->r + 1) ;
+        }
+    }
+    return PT_DONE ;
+}
+
+/* a rendezvous exchanging a value each round */
+typedef struct exchange_context_s {
+    pt_thread_t pt_thread ;
+    pt_func_t pt_func ;
+    barrier_arrive_context_t arrive ;
+    barrier_t * b ;
+    int (* slot)[2] ;       /* two sets, so writing round r+1 can't clobber r */
+    int id ;
+    int r ;
+} exchange_context_t ;
+
+static pt_t
+exchange_thr(env_t const env)
+{
+    exchange_context_t * const c = env ;
+    pt_resume(c) ;
+
+    for (c->r = 0; c->r < BARRIER_ROUNDS; c->r++) {
+        c->slot[c->r % 2][c->id] = 100 * c->id + c->r ;
+        pt_call(c, barrier_arrive, &c->arrive, c->b) ;
+        check(c->slot[c->r % 2][!c->id] == 100 * !c->id + c->r) ;
+    }
+    return PT_DONE ;
+}
+
+static void
+test_barrier(void)
+{
+    protothread_t const pt = protothread_create() ;
+    barrier_t b = { .n = BARRIER_N } ;
+    int round[BARRIER_N] ;
+    barrier_context_t c[BARRIER_N] ;
+    barrier_t b2 = { .n = 2 } ;
+    int slot[2][2] ;
+    exchange_context_t x[2] ;
+
+    for (int i = 0; i < BARRIER_N; i++) {
+        c[i] = (barrier_context_t){ .b = &b, .round = round, .id = i } ;
+        pt_create(pt, &c[i].pt_thread, barrier_thr, &c[i]) ;
+    }
+    for (int i = 0; i < 2; i++) {
+        x[i] = (exchange_context_t){ .b = &b2, .slot = slot, .id = i } ;
+        pt_create(pt, &x[i].pt_thread, exchange_thr, &x[i]) ;
+    }
+    while (protothread_run(pt)) {
+    }
+    for (int i = 0; i < BARRIER_N; i++) {
+        check(!pt_is_alive(&c[i].pt_thread)) ;
+    }
+    for (int i = 0; i < 2; i++) {
+        check(!pt_is_alive(&x[i].pt_thread)) ;
+    }
+    check(b.gen == BARRIER_ROUNDS && b.arrived == 0) ;
+    check(b2.gen == BARRIER_ROUNDS && b2.arrived == 0) ;
+    protothread_free(pt) ;
+}
+
 /* recursive ******************************************************************/
 
 /* count to 4096 the hard way */
@@ -2453,6 +2579,7 @@ main()
     test_broadcast_all() ;
     test_pc() ;
     test_pc_big() ;
+    test_barrier() ;
     test_recursive() ;
     test_sem() ;
     test_lock() ;

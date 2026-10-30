@@ -548,7 +548,7 @@ If **A** calls **B**, and then calls **C** after **B** returns, **B** and **C** 
 
 There is no associated mutex because the scheduler is non-preemptive. `pthread_cond_wait()` needs one to make "test the predicate" and "suspend" a single indivisible step. Protothreads can't interleave (except explicitly), so that step is already indivisible. (But this problem can exist with interrupts; see [Lost wakeups](#lost-wakeups)).
 
-**It is universal.** Every common blocking synchronization primitive can be built on top of it. The semaphores in `protothread_sem.h`, the reader-writer lock in `protothread_lock.h`, the sleeps in `protothread_timer.h`, and the queues in `protothread_queue.h` are all ordinary protothread code using `pt_wait()` and `pt_broadcast()`, with no privileged access to the scheduler. If you need a barrier or a latch, you write it the same way, in your own code, without patching the library.
+**It is universal.** Every common blocking synchronization primitive can be built on top of it. The semaphores in `protothread_sem.h`, the reader-writer lock in `protothread_lock.h`, the sleeps in `protothread_timer.h`, and the queues in `protothread_queue.h` are all ordinary protothread code using `pt_wait()` and `pt_broadcast()`, with no privileged access to the scheduler. If you need a barrier or a latch, you write it the same way, in your own code, without patching the library (see [Example - a barrier](#example---a-barrier)).
 
 **The mental model stays simple.** A protothread waits for a condition to be *true*, not for an event to *happen*. In electrical engineering, this is level-triggered versus edge-triggered. Level-triggered means a condition can be re-tested at any time. An event (edge-triggered) can be missed. So the simplest correct way to wait is to spin on the predicate:
 
@@ -583,6 +583,34 @@ The analogy has one limitation. A real spin loop can never miss anything, becaus
 In a large, mission-critical system, consider calling `pt_broadcast_all()` periodically. It wakes every waiting protothread, so a missed-wakeup bug causes a delay instead of a hang.
 
 It can also be part of an orderly shutdown process. Set a flag that every wait loop also tests, call `pt_broadcast_all()`, and call `protothread_run()` until it returns false. Each protothread wakes, sees the flag, releases what it holds, and returns. This only works for waits you write yourself. A protothread blocked inside a library call, such as a semaphore acquire or a queue receive, re-tests that call's condition and goes back to waiting.
+
+### Example - a barrier ###
+
+A barrier holds protothreads until `n` of them have arrived, then lets them all go. With `n` of 2 it's a rendezvous. Two protothreads meet, and neither continues until the other gets there. They can exchange data this way, too. Each writes its part before arriving and reads the other's part after. If they meet again, alternate between two sets of slots by round. Otherwise one may write its next part before the other has read this one.
+
+```c
+typedef struct {
+    int n;              /* how many must arrive */
+    int arrived;
+    unsigned int gen;   /* incremented each time it opens */
+} barrier_t;
+
+/* arrive, in a protothread function whose context has a gen */
+if (++b->arrived < b->n) {
+    c->gen = b->gen;
+    while (b->gen == c->gen) {
+        pt_wait(c, &b->gen);
+    }
+} else {
+    b->arrived = 0;
+    b->gen++;
+    pt_broadcast(pt_get_pt(c), &b->gen);
+}
+```
+
+The waiters test `gen` rather than `arrived`, and here's why. Say `n` is 3. A and B arrive and wait. C arrives last, opens the barrier, and keeps running. A and B are now ready, but they won't run until C yields or waits. Before then, C may come back around and arrive for the next round, and so may D. Now `arrived` is 2. If A and B tested `arrived`, they'd see a round in progress, go back to waiting, and could wait forever. Instead they find that `gen` has changed since they arrived, and they go on, which is correct.
+
+`gen` is only compared for equality, so it's fine for it to wrap around. It would have to advance 2^32 times before A and B run, and it can't. The run list is first-in, first-out, so A and B run ahead of any thread readied after them.
 
 ## Deterministic execution ##
 
