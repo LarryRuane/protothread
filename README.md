@@ -57,6 +57,14 @@ To build and run the test suite:
 cmake -S . -B build && cmake --build build && ./build/pttest
 ```
 
+### Try it online ###
+
+These OnlineGDB projects run in a browser, with nothing to install. Each has a copy of `protothread.h` followed by an example, and a comment at the top says how to step through it in the debugger. Stepping *into* everything shows all the work it takes to create a protothread, schedule it, and switch between protothreads.
+
+  * [Hello, world](https://onlinegdb.com/UBllxDHRj)
+  * [Producer/consumer](https://onlinegdb.com/GtGhLrlr8), the example below
+  * [Producer/consumer with the macros expanded](https://onlinegdb.com/m5UvTW_YK). A debugger can't step into `pt_resume()` and `pt_wait()`, so this version has them written out (as in [How does it work?](#how-does-it-work)).
+
 ### The API ###
 
 The core is twenty-two entries in the following two tables, all in `protothread.h`. The `protothread_` prefix is used for operations on the overall protothread object; the `pt_` prefix is for operations involving specific protothreads. Everything else in `protothread.h` is internal and has a `pt_i_` or `PT_I_` prefix. Anything *without* those prefixes is API you can rely on, and anything with one may change in a later release.
