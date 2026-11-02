@@ -658,7 +658,9 @@ The [`demo/`](demo) directory has three complete working programs, one for each 
 | [`demo/async_io.c`](demo/async_io.c) | concurrent asynchronous I/O and no POSIX threads. One `poll()` loop turns completions into signals. `./build/ptaio -v` traces every submission and completion, which come out interleaved |
 | [`demo/helper_thread.c`](demo/helper_thread.c) | one throwaway POSIX thread per blocking call, created and joined by the protothread that needs it |
 
-They are not built by default, since two of the three need pthreads and the library itself does not:
+There's also [`demo/tpcc.c`](demo/tpcc.c), a load-generating client modeled on the TPC-C benchmark. Each of its terminals is a protothread, and `-w 10000` runs 100,000 of them on one OS thread against a simulated database (see [demo/README.md](demo/README.md#the-tpc-c-client)).
+
+The demos are not built by default, since two of them need pthreads and the library itself does not:
 
 ```
 cmake -S . -B build -DPROTOTHREAD_DEMOS=ON

@@ -53,7 +53,7 @@ if(PROTOTHREAD_BENCH)
     target_compile_options(ptbench PRIVATE -O2)
 endif()
 
-# The demo programs in demo/ are off by default: two of the three need
+# The demo programs in demo/ are off by default: two of the four need
 # POSIX threads, and none of them must become a dependency of an ordinary
 # build, least of all a cross-compiled one.
 #   cmake -S . -B build -DPROTOTHREAD_DEMOS=ON && ./build/ptpool
@@ -69,6 +69,9 @@ if(PROTOTHREAD_DEMOS)
 
     add_executable(pthelper demo/helper_thread.c)
     target_link_libraries(pthelper PRIVATE protothread Threads::Threads)
+
+    add_executable(pttpcc demo/tpcc.c)
+    target_link_libraries(pttpcc PRIVATE protothread)
 endif()
 
 configure_file(

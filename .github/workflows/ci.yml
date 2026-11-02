@@ -375,7 +375,7 @@ jobs:
               fi
             done
           done
-          for d in pool async_io helper_thread ; do
+          for d in pool async_io helper_thread tpcc ; do
             printf '%-41s ' "demo/$d"
             if ${{ matrix.cc }} -O2 -DPT_SIGNAL_WAKES_ALL=1 -Wall -Wextra -Werror -I. \
                  demo/$d.c -o "$d" -lpthread 2> err.txt && "./$d" > /dev/null ; then
@@ -482,7 +482,7 @@ jobs:
           cmake --build build
           ./build/pttest
           test ! -f build/ptbench
-          for d in ptpool ptaio pthelper ; do test ! -f "build/$d" ; done
+          for d in ptpool ptaio pthelper pttpcc ; do test ! -f "build/$d" ; done
           echo "benchmark and demos correctly not built by default"
       - name: Install and consume via pkg-config
         run: |
@@ -505,6 +505,7 @@ jobs:
           ./build-extra/ptpool
           ./build-extra/ptaio
           ./build-extra/pthelper
+          ./build-extra/pttpcc
           ./build-extra/ptbench 20000 2000
 
   macos:
@@ -519,7 +520,7 @@ jobs:
             ./pttest
             echo "ok: ${cfg:-(default)}"
           done
-          for d in pool async_io helper_thread ; do
+          for d in pool async_io helper_thread tpcc ; do
             cc -O2 -Wall -Wextra -Werror -I. demo/$d.c -o "$d" -lpthread
             "./$d"
           done
