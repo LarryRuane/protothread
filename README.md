@@ -61,7 +61,7 @@ cmake -S . -B build && cmake --build build && ./build/pttest
 
 These OnlineGDB projects run in a browser, with nothing to install. Each has a copy of `protothread.h` followed by an example, and a comment at the top says how to step through it in the debugger. Stepping *into* everything shows all the work it takes to create a protothread, schedule it, and switch between protothreads.
 
-  * [Hello, world](https://onlinegdb.com/UBllxDHRj)
+  * [Hello, world](https://onlinegdb.com/UBllxDHRj). Stepping into everything, it finishes in under 100 steps.
   * [Producer/consumer](https://onlinegdb.com/GtGhLrlr8), the example below
   * [Producer/consumer with the macros expanded](https://onlinegdb.com/m5UvTW_YK). A debugger can't step into `pt_resume()` and `pt_wait()`, so this version has them written out (as in [How does it work?](#how-does-it-work)).
 
