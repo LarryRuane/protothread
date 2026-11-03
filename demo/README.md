@@ -88,3 +88,8 @@ between. The run then fails TPC-C's consistency checks and reports what was
 lost. There's no preemption, but a wait between a read and a write is still a
 race. `-H` starts every terminal at once, the thundering herd YDB ran into,
 and the peak queue depth shows it.
+
+This demo also shows why the timers keep sleepers in a heap. They used to be in
+a sorted list, and a new sleep usually went at the end, so each one walked
+the whole list. With the list, `-w 1000` (10,000 terminals) took 38 seconds of
+CPU. With the heap it takes about half a second.
