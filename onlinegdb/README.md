@@ -5,6 +5,7 @@ These are the sources behind the OnlineGDB projects in the main README's
 
 | File | Project |
 |---|---|
+| [`hello.c`](hello.c) | [Hello, world](https://onlinegdb.com/UBllxDHRj) |
 | [`pc.c`](pc.c) | [Producer/consumer](https://onlinegdb.com/GtGhLrlr8) |
 | [`pc_expanded.c`](pc_expanded.c) | [Producer/consumer with the macros expanded](https://onlinegdb.com/m5UvTW_YK) |
 
