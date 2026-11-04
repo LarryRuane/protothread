@@ -59,7 +59,7 @@ cmake -S . -B build && cmake --build build && ./build/pttest
 
 ### Try it online ###
 
-These OnlineGDB projects run in a browser, with nothing to install. Each has a copy of `protothread.h` followed by an example, and a comment at the top says how to step through it in the debugger. Stepping *into* everything shows all the work it takes to create a protothread, schedule it, and switch between protothreads.
+These OnlineGDB projects run in a browser, with nothing to install. You'll need to create a free account. Each has a copy of `protothread.h` followed by an example, and a comment at the top says how to step through it in the debugger. Stepping *into* everything shows all the work it takes to create a protothread, schedule it, and switch between protothreads.
 
   * [Hello, world](https://onlinegdb.com/UBllxDHRj). Stepping into everything, it finishes in under 100 steps.
   * [Producer/consumer](https://onlinegdb.com/GtGhLrlr8), the example below
