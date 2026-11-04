@@ -40,7 +40,7 @@ Allowing blocking within a `switch` requires [gcc label variables](http://gcc.gn
 Protothreads are faster here because they do less. There's no kernel transition, no scheduler, no per-thread stack, no mutex locking. POSIX threads provide preemption and real parallelism, which protothreads do not. See [Memory overhead and performance](#memory-overhead-and-performance-benchmarks) for a detailed comparison and [Protothreads on a multi-core system](#protothreads-on-a-multi-core-system) for using both together. Also included:
   * optional semaphores, reader-writer locks, timers, and message queues, each in its own header and built entirely on the core
   * about 1000 lines of test code
-  * gdb (debugger) macros to print the stack traces of a given protothread or all protothreads
+  * gdb and lldb (debugger) macros (`gdbinit`, `lldbinit.py`) to print the stack traces of a given protothread or all protothreads
   * a CMake find module, `FindPROTOTHREAD.cmake`. Copy it into another CMake project, and `find_package(PROTOTHREAD)` will locate the installed headers
 
 ### Using it ###
@@ -771,7 +771,7 @@ All configuration is by preprocessor macro. Because the library is header-only, 
 
 > `PT_DEBUG` (default `1`)
 >
-> Enables internal assertions and the bookkeeping the gdb macros use to print protothread stack traces. Set to `0` for production builds. **This changes the layout of `pt_thread_t` and `pt_func_t`**, so it must be the same for your whole program.
+> Enables internal assertions and the bookkeeping the gdb and lldb macros use to print protothread stack traces. Set to `0` for production builds. **This changes the layout of `pt_thread_t` and `pt_func_t`**, so it must be the same for your whole program.
 
 > `PT_NWAIT` (default `1024`)
 >
