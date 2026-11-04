@@ -9,26 +9,20 @@ These are the sources behind the OnlineGDB projects in the main README's
 | [`pc.c`](pc.c) | [Producer/consumer](https://onlinegdb.com/GtGhLrlr8) |
 | [`pc_expanded.c`](pc_expanded.c) | [Producer/consumer with the macros expanded](https://onlinegdb.com/m5UvTW_YK) |
 
-They're kept here in case a project link stops working. The comment at the
-top of each file is what a visitor reads first, and the example is at the
-bottom.
-
-OnlineGDB's editor won't follow the debugger into a second file, so each
-project is a single `main.c` with `protothread.h` pasted in where the
-`#include` is. To make one:
+They're kept here in case a project link stops working. If that happens, a
+maintainer (or anyone else) can re-create a project. OnlineGDB's editor won't
+follow the debugger into a second file, so each project is a single `main.c`
+with `protothread.h` pasted in. `make-main.sh` does the pasting:
 
 ```
-awk '/^#include "protothread.h"$/ {
-    while ((getline l < "../protothread.h") > 0) print l
-    print ""
-    print "/******************** END OF protothread.h ************************************/"
-    next
-} 1' pc.c > main.c
+./make-main.sh pc.c > main.c
 ```
 
-Then, at <https://www.onlinegdb.com/>, set the language to C, paste `main.c`
-in, and click Share (or Save, when logged in) for a link. Update the links
-here and in the main README.
+At <https://www.onlinegdb.com/>, click Sign Up or Login (you need an
+account, which is free). Click Create New Project, set
+the language to C (at the upper right), and replace the small `main()` that's
+there with the local `main.c`. Then click Share and select "Keep Forever" to
+get the link. Copy it into this README and the main README.
 
 Each file also builds against the repo's header as it is:
 
