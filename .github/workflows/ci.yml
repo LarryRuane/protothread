@@ -78,6 +78,16 @@ jobs:
           done
           exit $fail
 
+  # The ptbt and ptbtall commands in gdbinit and lldbinit.py.
+  debuggers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install gdb and lldb
+        run: sudo apt-get update && sudo apt-get install -y gdb lldb
+      - name: Run ptbtall in both debuggers
+        run: ./debugger_test.sh
+
   standards:
     name: std (${{ matrix.cc }} ${{ matrix.std }})
     runs-on: ubuntu-latest
