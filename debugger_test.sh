@@ -53,8 +53,17 @@ summary() {
         -e 's/ p \*\(struct pt_thread_s \*\)0x[0-9a-f]+$//' \
         -e 's/ \(0x[0-9a-f]+\)//'
 }
-summary "$tmp/gdb.out" > "$tmp/gdb.sum"
-summary "$tmp/lldb.out" > "$tmp/lldb.sum"
+
+# sort each run of waiting threads, since bucket order follows their addresses
+sort_waits() {
+    awk '/^state/ { if (r) print r ; r = $0 ; next } { r = r "|" $0 }
+        END { if (r) print r }' |
+    awk '{ w = /^state: wait/ ; if (!w || !pw) g++
+        pw = w ; print g "\t" $0 }' |
+    sort -t "$(printf '\t')" -k1,1n -k2 | cut -f2- | tr '|' '\n'
+}
+summary "$tmp/gdb.out" | sort_waits > "$tmp/gdb.sum"
+summary "$tmp/lldb.out" | sort_waits > "$tmp/lldb.sum"
 
 fail=0
 for d in gdb lldb ; do
