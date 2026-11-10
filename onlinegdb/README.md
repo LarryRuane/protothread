@@ -22,7 +22,16 @@ At <https://www.onlinegdb.com/>, click Sign Up or Login (you need an
 account, which is free). Click Create New Project, set
 the language to C (at the upper right), and replace the small `main()` that's
 there with the local `main.c`. Then click Share and select "Keep Forever" to
-get the link. Copy it into this README and the main README.
+get the link. Copy it into this README and the main README. Sharing again
+after an edit can change the link, so check them afterward.
+
+To update an existing project, copy the output straight to the clipboard,
+then select all in the OnlineGDB editor (Ctrl-A) and paste:
+
+```
+./make-main.sh pc.c | xclip -selection clipboard    # Linux
+./make-main.sh pc.c | pbcopy                        # macOS
+```
 
 Each file also builds against the repo's header as it is:
 
