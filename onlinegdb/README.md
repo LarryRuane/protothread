@@ -6,7 +6,7 @@ These are the sources behind the OnlineGDB projects in the main README's
 | File | Project |
 |---|---|
 | [`hello.c`](hello.c) | [Hello, world](https://onlinegdb.com/UBllxDHRj) |
-| [`pc.c`](pc.c) | [Producer/consumer](https://onlinegdb.com/GtGhLrlr8) |
+| [`pc.c`](pc.c) | [Producer/consumer](https://onlinegdb.com/DV4O3FUMC) |
 | [`pc_expanded.c`](pc_expanded.c) | [Producer/consumer with the macros expanded](https://onlinegdb.com/m5UvTW_YK) |
 
 They're kept here in case a project link stops working. If that happens, a
