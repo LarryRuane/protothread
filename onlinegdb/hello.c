@@ -3,14 +3,15 @@
  * protothread.h is pasted in first below. The example is at the bottom,
  * after "END OF protothread.h". Press Ctrl-End to get there.
  *
- * To step through it, set a breakpoint on the first line of main(), the call
- * to protothread_create(). The easiest way to set a breakpoint is to click
- * to the left of the line number. Click Debug at the top, then type "r" at
- * the (gdb) prompt to run to the breakpoint. From there, type "s" (step
- * into), and then press Enter to continue stepping. Stepping into everything
- * shows how little is needed to create a protothread, schedule it, and
- * run it. Imagine single-stepping through a POSIX pthread_create() and a
- * context switch!
+ * To step through it, first click "Fork this" at the top (no account is
+ * needed), which brings up the Debug button. Then set a breakpoint on the first
+ * line of main(), the call to protothread_create(). The easiest way to set a
+ * breakpoint is to click to the left of the line number. Click Debug at the
+ * top, then type "r" at the (gdb) prompt to run to the breakpoint. From there,
+ * type "s" (step into), and then press Enter to continue stepping. Stepping
+ * into everything shows how little is needed to create a protothread, schedule
+ * it, and run it. Imagine single-stepping through a POSIX pthread_create() and
+ * a context switch!
  *
  * Setting PT_NWAIT to 2 just below makes stepping through protothread_init()
  * faster.

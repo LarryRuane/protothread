@@ -7,11 +7,12 @@
  * Here pt_resume() and pt_wait() are expanded by hand, so the debugger can
  * step through them. Each expansion is marked with the macro it replaces.
  *
- * To step through it, set a breakpoint on the first line of main(), the call
- * to protothread_create(). The easiest way to set a breakpoint is to click
- * to the left of the line number. Click Debug at the top, then type "r" at
- * the (gdb) prompt to run to the breakpoint. From there, type "s" (step
- * into), and then press Enter to continue stepping.
+ * To step through it, first click "Fork this" at the top (no account is
+ * needed), which brings up the Debug button. Then set a breakpoint on the first
+ * line of main(), the call to protothread_create(). The easiest way to set a
+ * breakpoint is to click to the left of the line number. Click Debug at the
+ * top, then type "r" at the (gdb) prompt to run to the breakpoint. From there,
+ * type "s" (step into), and then press Enter to continue stepping.
  *
  * Watch "return pt_i_return_wait()" go back to the scheduler, the other
  * protothread run, and then the goto in pt_resume() jump back into the
