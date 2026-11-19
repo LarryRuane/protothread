@@ -1,6 +1,6 @@
 # Demo programs
 
-Four complete, working programs. They are built together, and are not built
+Five complete, working programs. They are built together, and are not built
 by default because two of them need POSIX threads and the library itself
 does not:
 
@@ -8,6 +8,7 @@ does not:
 cmake -S . -B build -DPROTOTHREAD_DEMOS=ON
 cmake --build build
 ./build/ptpool && ./build/ptaio && ./build/pthelper && ./build/pttpcc
+./build/ptfmt < README.md
 ```
 
 | source | binary | what it shows |
@@ -16,6 +17,7 @@ cmake --build build
 | [`async_io.c`](async_io.c) | `ptaio` | concurrent asynchronous I/O and no POSIX threads at all -- one `poll()` loop turning completions into signals |
 | [`helper_thread.c`](helper_thread.c) | `pthelper` | one throwaway POSIX thread per blocking call, created and joined by the protothread that needs it |
 | [`tpcc.c`](tpcc.c) | `pttpcc` | a load-generating client modeled on the TPC-C benchmark, with one protothread per terminal, against a simulated database |
+| [`fmt.c`](fmt.c) | `ptfmt` | a simple version of the Unix `fmt` filter, as two protothreads connected by a queue, and the same program without them |
 
 The first three are each a different way of combining protothreads with
 work that happens outside them.
@@ -93,3 +95,25 @@ This demo also shows why the timers keep sleepers in a heap. They used to be in
 a sorted list, and a new sleep usually went at the end, so each one walked
 the whole list. With the list, `-w 1000` (10,000 terminals) took 38 seconds of
 CPU. With the heap it takes about half a second.
+
+## The fmt filter
+
+`fmt.c` is a simple version of the Unix `fmt` filter. It reads text on
+stdin and fills lines up to 75 columns (or `-w`), keeping blank lines as
+paragraph breaks.
+
+The input is lines of words and the output is filled lines, and the two
+don't line up. One protothread reads, with a loop over lines and a loop over
+words inside it, and sends each word to a queue. Another receives words and
+fills lines. Each is written the way you'd describe it.
+
+`-e` gives the same output without protothreads. The reader becomes
+`get_word()`, which returns one word per call and keeps its place in the
+current line in static variables. For two stages that's manageable. In a
+longer pipeline, every stage but one has to be turned inside out like this.
+
+Sending data over an unreliable channel is a pipeline like that. The sender
+compresses, encrypts and adds error correction, and the receiver undoes each
+step in reverse order. Each stage works in its own units, which don't line up
+with the others. As protothreads connected by queues, each stage stays a
+plain loop that can be tested on its own and plugged in or out.

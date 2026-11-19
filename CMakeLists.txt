@@ -72,6 +72,9 @@ if(PROTOTHREAD_DEMOS)
 
     add_executable(pttpcc demo/tpcc.c)
     target_link_libraries(pttpcc PRIVATE protothread)
+
+    add_executable(ptfmt demo/fmt.c)
+    target_link_libraries(ptfmt PRIVATE protothread)
 endif()
 
 configure_file(
