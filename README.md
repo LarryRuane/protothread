@@ -660,6 +660,8 @@ The [`demo/`](demo) directory has three complete working programs, one for each 
 
 There's also [`demo/tpcc.c`](demo/tpcc.c), a load-generating client modeled on the TPC-C benchmark. Each of its terminals is a protothread, and `-w 10000` runs 100,000 of them on one OS thread against a simulated database (see [demo/README.md](demo/README.md#the-tpc-c-client)).
 
+[`demo/fmt.c`](demo/fmt.c) is a simple version of the Unix `fmt` filter. One protothread reads lines and sends words through a queue, and another fills output lines. With `-e` it does the same without protothreads, for comparison (see [demo/README.md](demo/README.md#the-fmt-filter)).
+
 The demos are not built by default, since two of them need pthreads and the library itself does not:
 
 ```
