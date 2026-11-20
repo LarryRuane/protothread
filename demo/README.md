@@ -1,6 +1,6 @@
 # Demo programs
 
-Five complete, working programs. They are built together, and are not built
+Six complete, working programs. They are built together, and are not built
 by default because two of them need POSIX threads and the library itself
 does not:
 
@@ -8,7 +8,7 @@ does not:
 cmake -S . -B build -DPROTOTHREAD_DEMOS=ON
 cmake --build build
 ./build/ptpool && ./build/ptaio && ./build/pthelper && ./build/pttpcc
-./build/ptfmt < README.md
+./build/ptfmt < README.md && ./build/ptuart
 ```
 
 | source | binary | what it shows |
@@ -18,6 +18,7 @@ cmake --build build
 | [`helper_thread.c`](helper_thread.c) | `pthelper` | one throwaway POSIX thread per blocking call, created and joined by the protothread that needs it |
 | [`tpcc.c`](tpcc.c) | `pttpcc` | a load-generating client modeled on the TPC-C benchmark, with one protothread per terminal, against a simulated database |
 | [`fmt.c`](fmt.c) | `ptfmt` | a simple version of the Unix `fmt` filter, as two protothreads connected by a queue, and the same program without them |
+| [`uart.c`](uart.c) | `ptuart` | a parser for binary frames from a serial port, fed by a receive interrupt through a queue, and the same parser as a state machine |
 
 The first three are each a different way of combining protothreads with
 work that happens outside them.
@@ -117,3 +118,36 @@ compresses, encrypts and adds error correction, and the receiver undoes each
 step in reverse order. Each stage works in its own units, which don't line up
 with the others. As protothreads connected by queues, each stage stays a
 plain loop that can be tested on its own and plugged in or out.
+
+## The UART receiver
+
+`uart.c` receives binary frames from a serial port, the way a
+microcontroller would. The frames are u-blox's UBX format, which GPS
+receivers send, mixed with NMEA text, and some are damaged on the way. A
+simulated receive interrupt puts each byte in a queue.
+
+The parser is a protothread that reads one field after another: the sync
+bytes, class, id, length, payload and checksum. It blocks on the queue for
+each byte, and the payload is read by an ordinary `for` loop.
+
+```
+$ ./build/ptuart
+1000 frames sent, 947 intact, 61964 bytes
+943 received, rejected 50 with a bad checksum and 3 too long
+4 intact frames lost after a dropped byte
+```
+
+A dropped byte makes the parser read into the next frame, so that frame can
+be lost too. Every frame received is checked against the ones sent.
+
+`-e` is the usual alternative, a function the interrupt calls for each byte,
+with a `switch` over nine states. It gives the same output. A few things the
+protothread version gets for free have to be handled by hand there. An empty
+payload has to skip the `PAYLOAD` state, or the parser would read the
+checksum as payload. Which states add to the checksum is decided apart from
+what each state does. And the order of the fields, which the protothread
+version reads straight down, is spread across the state transitions.
+
+On a microcontroller, the interrupt handler would call `byteq_try_send()`
+with the `PT_CRITICAL_*` macros defined, and the main loop would run
+`protothread_run()`.

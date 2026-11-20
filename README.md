@@ -662,6 +662,8 @@ There's also [`demo/tpcc.c`](demo/tpcc.c), a load-generating client modeled on t
 
 [`demo/fmt.c`](demo/fmt.c) is a simple version of the Unix `fmt` filter. One protothread reads lines and sends words through a queue, and another fills output lines. With `-e` it does the same without protothreads, for comparison (see [demo/README.md](demo/README.md#the-fmt-filter)).
 
+[`demo/uart.c`](demo/uart.c) parses binary frames from a serial port, fed byte by byte from a receive interrupt through a queue. It's one protothread that reads the fields in order, and `-e` runs the usual per-byte state machine instead (see [demo/README.md](demo/README.md#the-uart-receiver)).
+
 The demos are not built by default, since two of them need pthreads and the library itself does not:
 
 ```
