@@ -968,7 +968,7 @@ None of these schedule or wake a protothread, so none has the lost-wakeup hazard
 
 None of this is needed to use protothreads, and none of it is part of the core. Each header is ordinary protothread code over `pt_wait()` and `pt_broadcast()`, with no privileged access to the scheduler. They're closer in spirit to the programs in [`demo/`](demo) than to the API above, and they show how to build primitives of your own. They are tested and maintained like the rest of the library.
 
-Every semaphore and lock acquire is a `pt_call()` underneath, so [`pt_call_waited()`](#inside-a-protothread-function) tells you afterwards whether it blocked. If it didn't block, no other protothread has run since you asked, so whatever you looked at beforehand is still exactly as you saw it. If it did, anything could have changed while you waited, and you need to check again. That's the usual shape of code that finds something and then locks it:
+Every semaphore and lock acquire is a `pt_call()` underneath, so [`pt_call_waited()`](#inside-a-protothread-function) tells you afterwards whether it blocked. If it didn't block, no other protothread has run since you asked, so whatever you looked at beforehand is still exactly as you saw it. If it did, anything could have changed while you waited, and you need to check again. That's the usual pattern for code that finds something and then locks it:
 
 ```c
 c->e = cache_lookup(c->key);
