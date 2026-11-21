@@ -75,6 +75,9 @@ if(PROTOTHREAD_DEMOS)
 
     add_executable(ptfmt demo/fmt.c)
     target_link_libraries(ptfmt PRIVATE protothread)
+
+    add_executable(ptuart demo/uart.c)
+    target_link_libraries(ptuart PRIVATE protothread)
 endif()
 
 configure_file(
